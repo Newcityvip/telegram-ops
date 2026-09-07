@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operations · Telegram Ops</title>
+  <link rel="stylesheet" href="/dashboard/styles.css">
+  <script src="/dashboard/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/dashboard"><span class="brand-mark">T</span> Telegram Ops <span class="edition">OPERATIONS</span></a><span class="poc-label">POC · V1</span></header>
+  <main>
+    <div class="warning"><strong>Controlled POC · No authentication</strong><span>Anyone with access to this URL can view operational data and assign cases. Not ready for unrestricted production access.</span></div>
+    <section class="page-heading"><div><p class="eyebrow">WORKSPACE / OVERVIEW</p><h1>Operations dashboard</h1><p class="subtle">A clear view of incoming cases and agent ownership.</p></div><button id="refresh" class="button">↻ Refresh</button></section>
+    <p id="page-error" class="error" role="alert" hidden></p>
+    <section class="stats" aria-label="Operations summary">
+      <article><span>Total cases</span><strong id="total">—</strong><small>All received cases</small></article>
+      <article><span>Open</span><strong id="open">—</strong><small>In the operations queue</small></article>
+      <article class="attention"><span>Unassigned</span><strong id="unassigned">—</strong><small>Awaiting agent ownership</small></article>
+      <article><span>Active agents</span><strong id="agents">—</strong><small>Available for assignment</small></article>
+      <article><span>Shop assignments</span><strong id="shops">—</strong><small>Active shop mappings</small></article>
+    </section>
+    <section class="cases-card" aria-labelledby="cases-title">
+      <div class="section-heading"><div><h2 id="cases-title">Case queue</h2><p class="subtle">Newest cases first</p></div><span id="updated" class="subtle" aria-live="polite">Loading…</span></div>
+      <form id="filters" class="filters">
+        <label>Status<select id="status-filter"><option value="">All statuses</option><option>OPEN</option><option>UNASSIGNED</option></select></label>
+        <label>Agent<select id="agent-filter"><option value="">All agents</option></select></label>
+        <label>Shop code<input id="shop-filter" placeholder="e.g. EARTH020" maxlength="100" autocomplete="off"></label>
+        <button class="button primary" type="submit">Apply filters</button><button id="clear" class="button" type="button">Clear</button>
+      </form>
+      <div class="table-scroll"><table><thead><tr><th>Case ID</th><th>Received</th><th>Shop</th><th>Rule</th><th>Agent</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="case-rows"><tr><td colspan="7" class="empty">Loading cases…</td></tr></tbody></table></div>
+      <footer class="table-footer"><span id="case-count" class="subtle" aria-live="polite"></span><button id="load-more" class="button" hidden>Load older cases</button></footer>
+    </section>
+    <p class="footnote">Telegram ingestion is unchanged. Assigning a case does not change shop mappings or send a Telegram message.</p>
+  </main>
+  <dialog id="case-dialog" aria-labelledby="detail-title">
+    <div class="dialog-heading"><div><p class="eyebrow">CASE DETAILS</p><h2 id="detail-title">Case</h2></div><button id="close-detail" class="icon-button" aria-label="Close case details">✕</button></div>
+    <div id="detail-body" class="detail-body"></div>
+  </dialog>
+</body>
+</html>

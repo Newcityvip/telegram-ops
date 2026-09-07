@@ -1,74 +1,128 @@
-# Telegram operations Worker
+# Telegram Ops
 
-Cloudflare Worker `telegram-ops-api` receives Telegram updates and uses the existing
-D1 database `telegram-ops-db` through binding `DB`. The baseline is intended to
-keep request handling in `src/index.js`; dashboard and additional API development
-are future work.
+Operations dashboard and Telegram ingestion on the existing Cloudflare Worker
+`telegram-ops-api`, using D1 binding `DB` -> `telegram-ops-db`.
 
-`src/index.js` contains the supplied deployed POC implementation. Only Markdown
-code fences and escaped underscores from the pasted source were removed; SQL and
-request-processing logic are preserved. No schema has been inferred.
+**Controlled POC only: `/dashboard` and `/api/*` are temporarily unauthenticated.**
+Anyone who can reach this Worker can read operational messages and assign or
+reassign cases. The warning banner and browser headers are not access control.
+Add real authentication and authorization before unrestricted use. There are no
+passwords, hardcoded credentials, or secret values in this repository.
 
-## Local setup
+## Architecture
 
-1. Install a current Node.js LTS release and run `npm install`.
-2. Keep the existing D1 database ID placeholder until configuring deployment.
-3. Create an ignored `.dev.vars` file with local `NAME=value` entries for the two
-   names in `.dev.vars.example`. That example is a names-only inventory, not a
-   ready-to-use dotenv file. Never commit secret values.
-4. Run `npm run check` for JavaScript syntax and `npm run build` for a dry-run
-   bundle. Neither command deploys the Worker.
-5. Run `npm run dev` for local development. D1 is local; it does not contain the
-   production schema or data. Database-dependent tests require an independently
-   supplied copy of the exact existing schema and local fixtures. This repository
-   does not create tables, migrations, or test records.
+- `src/index.js`: supplied Telegram POC implementation, with a small routing hook.
+  The original health, database check, and webhook code is preserved.
+- `src/operations.js`: dashboard routing, read APIs, and manual case assignment.
+- `public/dashboard/`: plain HTML, CSS, and vanilla JavaScript. Wrangler serves
+  these assets through `ASSETS`; `run_worker_first` preserves Worker routing.
+- `test/operations.test.js`: in-memory SQLite tests, including a source hash
+  check against the verified ingestion baseline.
 
-## Existing verified POC behavior
+`GET /dashboard` provides summary cards, status/agent/shop filters, a recent-case
+table with older-page loading, and a keyboard-accessible case dialog. Unassigned
+cases are highlighted and can be assigned to an active agent. The dialog shows
+the original message, source sender, rule, agent, messages, audits, and responses.
+Message content is rendered as text, never interpreted as HTML.
 
-The following behavior was reported as verified in the existing deployment; it
-is preserved in the supplied source. Local syntax/build checks do not revalidate
-production D1 constraints or production data:
+## APIs
 
-- `GET /` returns JSON health; `GET /db-check` checks D1 and lists tables.
-- `POST /telegram/webhook` verifies `X-Telegram-Bot-Api-Secret-Token` against
-  `TELEGRAM_WEBHOOK_SECRET` and accepts Telegram messages.
-- Only active SOURCE/BOTH entries in `telegram_groups` are processed.
-  Unconfigured groups and unmatched messages are safely ignored.
-- Active rules run in priority order and support CONTAINS, STARTS_WITH, and REGEX.
-- EARTH followed by digits identifies a shop. `shop_assignments` resolves an
-  active AGENT user. Mapped cases are OPEN; unmapped cases are UNASSIGNED.
-- Duplicate protection uses `source_chat_id` + `source_message_id`, with existing
-  database UNIQUE constraints providing final protection against races.
-- `case_messages` preserves the original message/update. `audit_logs` records
-  CASE_AUTO_ASSIGNED or CASE_CREATED_UNASSIGNED.
+| Method | Route | Result |
+| --- | --- | --- |
+| GET | `/` | Existing JSON health response |
+| GET | `/db-check` | Existing D1 connectivity and table list |
+| POST | `/telegram/webhook` | Existing secret-verified ingestion |
+| GET | `/api/dashboard/summary` | Total/status counts, active agents and mappings |
+| GET | `/api/cases` | Up to 100 cases, newest ID first, with rule/agent names |
+| GET | `/api/cases/:id` | Complete case, rule, public agent fields, messages, responses, audits |
+| GET | `/api/agents` | Active AGENT users; only id, username, display name, role, active flag |
+| GET | `/api/shop-assignments` | Active mappings joined with agent display names |
+| POST | `/api/cases/:id/assign` | Manual assignment/reassignment with audit |
 
-Existing tables: `audit_logs`, `case_messages`, `cases`, `inquiries`, `responses`,
-`rules`, `shop_assignments`, `telegram_groups`, and `users`. Their definitions are
-owned by the existing database and are not reproduced or modified here.
+Case filters: `status`, `assigned_user_id`, `shop_code` (exact match). String
+filters are normalized to uppercase. `next_before_id` is the next page cursor;
+pass it as `before_id` while retaining filters. Values are parameterized.
 
-Reported fixtures: source group `-1003878565041` (EARTH DP ESCALATION, row 1);
-rule 1 TEST Shop Message (CONTAINS TEST, priority 10); user 1 `test_agent`
-(Test Agent, AGENT); EARTH003 maps to user 1. `TEST EARTH003` creates an assigned
-OPEN case, `TEST EARTH999` creates an UNASSIGNED case, and `HELLO EARTH003` creates
-no case. Duplicate rejection, message preservation, and audit creation were
-confirmed in the existing POC. These records are documentation, not seed scripts.
+Assignment accepts JSON `{"user_id": 1}` and requires an existing case and active
+AGENT. It sets `assigned_user_id` and an ISO `assigned_at`, changes UNASSIGNED to
+OPEN, and preserves other statuses. Audit insertion and case update use one D1
+batch transaction. Actions are `CASE_MANUALLY_ASSIGNED` or `CASE_REASSIGNED`;
+`old_value`/`new_value` store JSON snapshots of agent ID, assignment time, and
+status; metadata also records previous/new ownership and status. Audit `user_id` is
+NULL because this milestone has no authenticated actor. Shop mappings are never
+changed by assignment. The UI offers assignment for UNASSIGNED cases; the API
+also supports reassignment.
 
-## Deployment configuration (future manual step)
+## Schema compatibility
 
-Replace `REPLACE_WITH_EXISTING_D1_DATABASE_ID` with the ID of the existing
-`telegram-ops-db`; do not create a replacement database. Confirm the existing
-Worker's compatibility date and any compatibility flags before deployment to
-preserve runtime behavior. The date in this scaffold is provisional.
+No production schema or data is created or changed by setup, build, or tests.
+No migrations or seed commands are included. Existing tables remain `users`,
+`telegram_groups`, `rules`, `shop_assignments`, `cases`, `case_messages`,
+`responses`, `inquiries`, and `audit_logs`.
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` already exist in Cloudflare;
-keep their values outside Git. Future deployment requires authorized Cloudflare
-credentials and the correct account. `npm run deploy` is an explicit manual
-deployment command. This repository is connected to Cloudflare Workers Git
-deployment for `telegram-ops-api`, with `main` as the production branch.
+- Queries use columns evidenced in the supplied POC and the supplied cases,
+  users, audit_logs, and responses schemas. `received_at` is confirmed; null
+  values display a dash. Cases use descending ID order with a stable page cursor.
+- `responses.case_id` is confirmed. Detail retains a read-only
+  `PRAGMA table_info(responses)` guard for incomplete local fixtures; if absent,
+  it returns `responses_available: false` with an explicit warning. No alternative
+  key is guessed. Audit and response histories are ordered by their confirmed IDs.
+  Message history does not assume additional columns beyond the ingestion SQL.
+- Summary includes actual status counts plus OPEN, UNASSIGNED, ANSWERED, CLOSED
+  counters (zero when absent). No new status is inserted by summary queries.
+- The supplied audit schema defines `action TEXT NOT NULL` without a listed CHECK
+  restriction, allowing both manual audit action names. Only supplied schemas and
+  baseline queries were validated; the live production schema was not inspected.
+  SQL failures roll back the assignment batch. Tests cover failure of either
+  statement and an agent becoming inactive before the transaction.
 
-Existing URL: https://telegram-ops-api.mdrobiulislam.workers.dev
-Webhook path: `/telegram/webhook`. This setup does not deploy, connect GitHub to
-Cloudflare, change the webhook, modify production data, add the real Deposit /
-Follow Up rule, or build a dashboard.
+## Local setup and checks
 
-Configuration reference: [Cloudflare Wrangler documentation](https://developers.cloudflare.com/workers/wrangler/configuration/).
+Use Node.js 24 LTS (tests use built-in `node:sqlite`, which may emit an experimental
+warning). Run `npm ci`, then:
+
+```sh
+npm run check
+npm test
+npm run build
+npm run dev
+```
+
+`build` is `wrangler deploy --dry-run`; it does not deploy. `dev` uses local D1.
+Open `/dashboard` on the local URL. A fresh local D1 has no production schema, so
+database APIs report errors until the exact existing schema and local fixtures
+are supplied independently. Tests use disposable in-memory fixtures; they are
+not a schema specification and never contact production.
+
+If testing the webhook locally, create ignored `.dev.vars` entries with local
+`NAME=value` pairs. `.dev.vars.example` lists names only: `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_WEBHOOK_SECRET`. Existing Cloudflare secret values stay outside Git.
+
+## Preserved Telegram behavior
+
+Only active SOURCE/BOTH groups are accepted. Active rules are evaluated by
+priority/id using CONTAINS, STARTS_WITH, or REGEX. EARTH followed by digits is
+extracted and resolved through an active shop assignment to an active AGENT.
+Mapped cases become OPEN; unmapped cases become UNASSIGNED. The original update
+is saved in `case_messages` and case creation is audited. Duplicate protection
+uses source chat/message IDs and existing UNIQUE constraints. Unconfigured groups
+and unmatched messages are ignored.
+
+Reported verified examples: `TEST EARTH003` -> OPEN/user 1; `TEST EARTH999` ->
+UNASSIGNED; `HELLO EARTH003` -> no case. The real Follow Up/Deposit message with
+EARTH020 matched existing rule 2 and created UNASSIGNED case 4. These are historical
+production observations, not seed data or automated production tests.
+
+## Deployment
+
+GitHub `main` is connected to Cloudflare Workers Git deployment for the existing
+Worker. Pushing this branch triggers that integration. No manual Wrangler deploy
+is needed for this milestone. The D1 ID, compatibility date (`2026-09-07`), and
+absence of compatibility flags are preserved. URL:
+https://telegram-ops-api.mdrobiulislam.workers.dev/dashboard
+
+No Telegram responses, inquiries, Google Sheets sync, authentication, new rules,
+webhook changes, or database migrations are implemented here.
+
+References: [D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/)
+and [Worker asset bindings](https://developers.cloudflare.com/workers/static-assets/binding/).

@@ -1,6 +1,10 @@
+import { handleOperations } from "./operations.js";
+
 export default {
 async fetch(request, env) {
 const url = new URL(request.url);
+const operationsResponse = await handleOperations(request, env, url);
+if (operationsResponse) return operationsResponse;
 // =========================================================
 // HEALTH CHECK
 // =========================================================
