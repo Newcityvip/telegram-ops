@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "telegram-ops-db",
-      "database_id": "REPLACE_WITH_EXISTING_D1_DATABASE_ID"
+      "database_id": "31ba291b-80f8-4e98-aa80-e6ead1c1437f"
     }
   ]
 }
