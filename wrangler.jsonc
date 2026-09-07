@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "telegram-ops-api",
+  "main": "src/index.js",
+  // Confirm the existing Worker's compatibility date before first deployment.
+  "compatibility_date": "2026-09-07",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "telegram-ops-db",
+      "database_id": "REPLACE_WITH_EXISTING_D1_DATABASE_ID"
+    }
+  ]
+}
