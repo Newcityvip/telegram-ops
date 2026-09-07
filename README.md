@@ -63,7 +63,8 @@ preserve runtime behavior. The date in this scaffold is provisional.
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` already exist in Cloudflare;
 keep their values outside Git. Future deployment requires authorized Cloudflare
 credentials and the correct account. `npm run deploy` is an explicit manual
-deployment command. No CI deployment integration is configured.
+deployment command. This repository is connected to Cloudflare Workers Git
+deployment for `telegram-ops-api`, with `main` as the production branch.
 
 Existing URL: https://telegram-ops-api.mdrobiulislam.workers.dev
 Webhook path: `/telegram/webhook`. This setup does not deploy, connect GitHub to
