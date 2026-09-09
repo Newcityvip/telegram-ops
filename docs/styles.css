@@ -437,7 +437,8 @@ dialog::backdrop {
 [hidden] {
   display:none!important
 }
-.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login form{width:min(400px,100%);background:#fff;border:1px solid var(--line);border-radius:14px;padding:36px}.login label{display:grid;gap:7px;margin:18px 0}.login .button{width:100%}#admin-config{margin-top:24px}#assignment-list,#sync-result{padding:0 24px 20px}#identity{font-size:12px;color:var(--muted)}
+.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login form{width:min(400px,100%);background:#fff;border:1px solid var(--line);border-radius:14px;padding:36px}.login label{display:grid;gap:7px;margin:18px 0}.login .button{width:100%}#admin-config,#user-management{margin-top:24px}#assignment-list,#sync-result{padding:0 24px 20px}#identity{font-size:12px;color:var(--muted)}
+.panel-message{margin:0 24px 20px}.row-actions{display:flex;gap:8px;justify-content:flex-end}.form-body{padding:24px 26px}.form-body>label{display:grid;gap:7px;margin-bottom:18px;font-size:12px;font-weight:650}.form-body .checkbox{display:flex;align-items:center}.checkbox input{min-height:auto}.form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}
 @media(max-width:1000px) {
   .stats {
     grid-template-columns:repeat(3,1fr)
@@ -518,5 +519,11 @@ dialog::backdrop {
   }
   .table-footer {
     padding:14px 18px
+  }
+  .row-actions {
+    flex-direction:column
+  }
+  .form-body {
+    padding:20px
   }
 }

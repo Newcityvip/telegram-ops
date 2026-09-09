@@ -12,6 +12,7 @@ in the static frontend.
 - `src/index.js`: supplied Telegram POC implementation, with a small routing hook.
   The original health, database check, and webhook code is preserved.
 - `src/operations.js`: dashboard routing, read APIs, and manual case assignment.
+- `src/users.js`: ADMIN-only account lifecycle APIs and safe audit writes.
 - `docs/`: GitHub Pages login and role-aware portal in plain HTML/CSS/JavaScript.
 - `src/auth.js`: bcrypt password verification and one-hour HMAC tokens.
 - `test/operations.test.js`: in-memory SQLite tests, including a source hash
@@ -36,6 +37,10 @@ Message content is rendered as text, never interpreted as HTML.
 | GET | `/api/agents` | Active AGENT users; only id, username, display name, role, active flag |
 | GET | `/api/shop-assignments` | Active mappings joined with agent display names |
 | POST | `/api/cases/:id/assign` | Manual assignment/reassignment with audit |
+| GET | `/api/admin/users` | ADMIN-only safe user list; never returns password hashes |
+| POST | `/api/admin/users` | ADMIN-only creation of an ADMIN or AGENT account |
+| POST | `/api/admin/users/:id/password` | ADMIN-only bcrypt password reset |
+| POST | `/api/admin/users/:id/status` | ADMIN-only activation/deactivation |
 
 Case filters: `status`, `assigned_user_id`, `shop_code` (exact match). String
 filters are normalized to uppercase. `next_before_id` is the next page cursor;
@@ -46,10 +51,19 @@ AGENT. It sets `assigned_user_id` and an ISO `assigned_at`, changes UNASSIGNED t
 OPEN, and preserves other statuses. Audit insertion and case update use one D1
 batch transaction. Actions are `CASE_MANUALLY_ASSIGNED` or `CASE_REASSIGNED`;
 `old_value`/`new_value` store JSON snapshots of agent ID, assignment time, and
-status; metadata also records previous/new ownership and status. Audit `user_id` is
-NULL because this milestone has no authenticated actor. Shop mappings are never
-changed by assignment. The UI offers assignment for UNASSIGNED cases; the API
-also supports reassignment.
+status; metadata also records previous/new ownership and status. Shop mappings
+are never changed by assignment. The UI offers assignment for UNASSIGNED cases;
+the API also supports reassignment.
+
+The ADMIN portal includes user management for creating accounts, resetting
+passwords, and changing active status. Usernames, display names, roles,
+password lengths, and status values are validated by the Worker. Passwords are
+bcrypt-hashed before D1 writes and are never returned or audited. ADMIN users
+cannot deactivate their own currently authenticated account. Account changes
+write `USER_CREATED`, `USER_PASSWORD_RESET`, `USER_ACTIVATED`, or
+`USER_DEACTIVATED` audit entries with the acting ADMIN ID. Users are deactivated
+instead of deleted so historical references remain intact. Creating an AGENT
+does not create or change a shop assignment.
 
 ## Schema compatibility
 
@@ -119,8 +133,8 @@ is needed for this milestone. The D1 ID, compatibility date (`2026-09-07`), and
 absence of compatibility flags are preserved. URL:
 https://telegram-ops-api.mdrobiulislam.workers.dev/dashboard
 
-No Telegram responses, inquiries, Google Sheets sync, authentication, new rules,
-webhook changes, or database migrations are implemented here.
+No Telegram responses, inquiries, new rules, webhook changes, or database
+migrations are implemented here.
 
 GitHub Pages must use **GitHub Actions** as its deployment source under repository
 Settings → Pages. The workflow publishes `docs/` without repository secrets.

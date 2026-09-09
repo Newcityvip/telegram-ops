@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import worker from "../src/index.js";
 import { issueToken, verifyToken } from "../src/auth.js";
-import { hashSync } from "bcryptjs";
+import { compareSync, hashSync } from "bcryptjs";
 
 // Disposable, in-memory test double ONLY. These minimal column definitions come
 // from the supplied schemas/baseline queries; they are not production migrations.
@@ -15,7 +15,7 @@ function fixture(t) {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
   sqlite.exec(`
-    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT, password_hash TEXT, is_active INTEGER, created_at TEXT, updated_at TEXT);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, display_name TEXT, role TEXT, password_hash TEXT, is_active INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE telegram_groups (id INTEGER PRIMARY KEY, telegram_chat_id TEXT, group_name TEXT, group_type TEXT, is_active INTEGER);
     CREATE TABLE rules (id INTEGER PRIMARY KEY, rule_name TEXT, match_type TEXT, match_pattern TEXT, response_type TEXT, response_config TEXT, destination_group_id INTEGER, priority INTEGER, is_active INTEGER);
     CREATE TABLE shop_assignments (id INTEGER PRIMARY KEY, shop_code TEXT NOT NULL, assigned_user_id INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -256,4 +256,93 @@ test("ADMIN sync validates fully then atomically updates mappings", async t => {
   let result=await (await request("/api/admin/sync-shop-assignments",{method:"POST"})).json();assert.equal(result.inserted,1);assert.equal(sqlite.prepare("SELECT assigned_user_id FROM shop_assignments WHERE shop_code='EARTH020'").get().assigned_user_id,2);
   const before=JSON.stringify(sqlite.prepare("SELECT * FROM shop_assignments ORDER BY id").all());globalThis.fetch=async()=>Response.json({ok:true,assignments:[{Shop_Code:"X",Agent_Username:"missing",Active:true},{Shop_Code:"X",Agent_Username:"test_agent",Active:true}]});
   const bad=await request("/api/admin/sync-shop-assignments",{method:"POST"});assert.equal(bad.status,422);assert.equal(JSON.stringify(sqlite.prepare("SELECT * FROM shop_assignments ORDER BY id").all()),before);
+});
+
+test("ADMIN lists safe user fields and creates AGENT and ADMIN accounts", async t => {
+  const { request, sqlite } = fixture(t);
+  let response = await request("/api/admin/users");
+  assert.equal(response.status, 200);
+  const listed = await response.json();
+  assert.equal(listed.users.length, 5);
+  assert.deepEqual(Object.keys(listed.users[0]).sort(), ["created_at", "display_name", "id", "is_active", "role", "username"]);
+  assert.equal(JSON.stringify(listed).includes("password_hash"), false);
+
+  const create = (username, role) => request("/api/admin/users", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, display_name: `${role} Test`, role, password: "a secure test password", is_active: true })
+  });
+  response = await create("new_agent", "AGENT");
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).user.role, "AGENT");
+  response = await create("new_admin", "ADMIN");
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).user.role, "ADMIN");
+
+  const stored = sqlite.prepare("SELECT password_hash FROM users WHERE username='new_agent'").get().password_hash;
+  assert.notEqual(stored, "a secure test password");
+  assert.equal(compareSync("a secure test password", stored), true);
+  const audits = sqlite.prepare("SELECT * FROM audit_logs WHERE action='USER_CREATED' ORDER BY id").all();
+  assert.equal(audits.length, 2); assert.ok(audits.every(row => row.user_id === 4));
+  assert.equal(JSON.stringify(audits).includes("password"), false);
+  assert.equal(JSON.stringify(audits).includes(stored), false);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM shop_assignments").get().n, 1);
+});
+
+test("user creation rejects duplicates, invalid roles, and invalid fields", async t => {
+  const { request, sqlite } = fixture(t);
+  const post = body => request("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const valid = { username: "admin", display_name: "Duplicate", role: "AGENT", password: "a secure test password", is_active: true };
+  assert.equal((await post(valid)).status, 409);
+  assert.equal((await post({ ...valid, username: "valid_name", role: "OWNER" })).status, 400);
+  assert.equal((await post({ ...valid, username: "bad name" })).status, 400);
+  assert.equal((await post({ ...valid, username: "valid_name", password: "short" })).status, 400);
+  assert.equal((await post({ ...valid, username: "valid_name", display_name: "" })).status, 400);
+  assert.equal((await post({ ...valid, username: "valid_name", is_active: 1 })).status, 400);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM users").get().n, 5);
+});
+
+test("ADMIN resets passwords and activates or deactivates other users with safe audits", async t => {
+  const { request, sqlite } = fixture(t);
+  let response = await request("/api/admin/users/1/password", { method: "POST", body: JSON.stringify({ password: "the replacement password" }) });
+  assert.equal(response.status, 200);
+  const stored = sqlite.prepare("SELECT password_hash FROM users WHERE id=1").get().password_hash;
+  assert.equal(compareSync("the replacement password", stored), true);
+  const login = await request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "test_agent", password: "the replacement password" }) }, null);
+  assert.equal(login.status, 200);
+
+  response = await request("/api/admin/users/1/status", { method: "POST", body: JSON.stringify({ is_active: false }) });
+  assert.equal(response.status, 200); assert.equal(sqlite.prepare("SELECT is_active FROM users WHERE id=1").get().is_active, 0);
+  response = await request("/api/admin/users/1/status", { method: "POST", body: JSON.stringify({ is_active: true }) });
+  assert.equal(response.status, 200); assert.equal(sqlite.prepare("SELECT is_active FROM users WHERE id=1").get().is_active, 1);
+  response = await request("/api/admin/users/4/status", { method: "POST", body: JSON.stringify({ is_active: false }) });
+  assert.equal(response.status, 409); assert.equal(sqlite.prepare("SELECT is_active FROM users WHERE id=4").get().is_active, 1);
+
+  const audits = sqlite.prepare("SELECT action, user_id, old_value, new_value, metadata FROM audit_logs WHERE entity_type='USER' ORDER BY id").all();
+  assert.deepEqual(audits.map(row => row.action), ["USER_PASSWORD_RESET", "USER_DEACTIVATED", "USER_ACTIVATED"]);
+  assert.ok(audits.every(row => row.user_id === 4));
+  const serialized = JSON.stringify(audits);
+  assert.equal(serialized.includes("replacement password"), false); assert.equal(serialized.includes(stored), false);
+});
+
+test("AGENT receives 403 for every user-management endpoint", async t => {
+  const { request, sqlite } = fixture(t);
+  const calls = [
+    ["/api/admin/users", {}],
+    ["/api/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", role: "AGENT", password: "a secure test password", is_active: true }) }],
+    ["/api/admin/users/2/password", { method: "POST", body: JSON.stringify({ password: "a replacement password" }) }],
+    ["/api/admin/users/2/status", { method: "POST", body: JSON.stringify({ is_active: false }) }]
+  ];
+  for (const [path, options] of calls) assert.equal((await request(path, options, 1)).status, 403);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM users").get().n, 5);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM audit_logs").get().n, 0);
+});
+
+test("a failed user audit rolls back the account mutation", async t => {
+  const { request, sqlite } = fixture(t);
+  sqlite.exec("CREATE TRIGGER reject_user_audit BEFORE INSERT ON audit_logs BEGIN SELECT RAISE(ABORT, 'test user audit failure'); END");
+  const response = await request("/api/admin/users", {
+    method: "POST", body: JSON.stringify({ username: "rolled_back", display_name: "Rolled Back", role: "AGENT", password: "a secure test password", is_active: true })
+  });
+  assert.equal(response.status, 500);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM users WHERE username='rolled_back'").get().n, 0);
 });
