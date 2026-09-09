@@ -93,6 +93,22 @@ if (
       });
     }
 
+    // OWN BOT LOOP GUARD
+    const configuredBotId = getConfiguredBotId(env.TELEGRAM_BOT_TOKEN);
+
+    if (
+      configuredBotId &&
+      message.from?.id != null &&
+      String(message.from.id) === configuredBotId
+    ) {
+      return Response.json({
+        ok: true,
+        ignored: true,
+        reason: "OWN_BOT_MESSAGE"
+      });
+    }
+    // END OWN BOT LOOP GUARD
+
     const chatId = String(message.chat.id);
     const messageId = message.message_id;
 
@@ -455,3 +471,10 @@ return `@${from.username}`;
 
 return null;
 }
+
+// OWN BOT ID HELPER
+function getConfiguredBotId(token) {
+const match = String(token || "").match(/^([1-9]\d*):/);
+return match ? match[1] : null;
+}
+// END OWN BOT ID HELPER

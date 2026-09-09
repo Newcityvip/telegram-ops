@@ -52,7 +52,7 @@ function fixture(t) {
     }
   };
   sqlite.prepare("UPDATE users SET password_hash=? WHERE id IN (1,3,4)").run(hashSync("correct horse battery staple",4));
-  const env = { DB, TELEGRAM_WEBHOOK_SECRET: "local-test-only", AUTH_SECRET: "test-auth-secret-long-enough" };
+  const env = { DB, TELEGRAM_WEBHOOK_SECRET: "local-test-only", TELEGRAM_BOT_TOKEN: "123456:local-test-only", AUTH_SECRET: "test-auth-secret-long-enough" };
   const request = async (path, init={}, userId=4) => { const headers=new Headers(init.headers); if(path.startsWith("/api/")&&path!=="/api/auth/login"&&userId)headers.set("Authorization",`Bearer ${await issueToken(userId,env.AUTH_SECRET)}`); return worker.fetch(new Request(`https://example.test${path}`,{...init,headers}),env); };
   const assignment = (id, user_id) => request(`/api/cases/${id}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id }) });
   let messageId = 0;
@@ -63,11 +63,33 @@ function fixture(t) {
   return { sqlite, env, request, assignment, webhook };
 }
 
-test("original ingestion source is byte-identical after removing only routing integration", () => {
+test("original ingestion source is byte-identical after removing only routing and own-bot guard", () => {
   const source = readFileSync(new URL("../src/index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n")
     .replace('import { handleOperations } from "./operations.js";\n\n', "")
-    .replace('const operationsResponse = await handleOperations(request, env, url);\nif (operationsResponse) return operationsResponse;\n', "");
+    .replace('const operationsResponse = await handleOperations(request, env, url);\nif (operationsResponse) return operationsResponse;\n', "")
+    .replace(/\n    \/\/ OWN BOT LOOP GUARD\n[\s\S]*?    \/\/ END OWN BOT LOOP GUARD\n/, "")
+    .replace(/\n\/\/ OWN BOT ID HELPER\n[\s\S]*?\/\/ END OWN BOT ID HELPER\n/, "");
   assert.equal(createHash("sha256").update(source).digest("hex"), "70007cdb8bce382dcec11e55f2c503d00629273252179f9eccfc3df96a0861ae");
+});
+
+test("webhook ignores only messages authored by the configured bot", async t => {
+  const { request, webhook, sqlite, env } = fixture(t);
+  assert.equal((await request("/telegram/webhook", { method: "POST" })).status, 401);
+  const own = await (await webhook("TEST EARTH003", { from: { id: 123456, is_bot: true, username: "configured_bot" } })).json();
+  assert.deepEqual(own, { ok: true, ignored: true, reason: "OWN_BOT_MESSAGE" });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM cases").get().n, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM case_messages").get().n, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM audit_logs").get().n, 0);
+
+  const otherBot = await (await webhook("TEST EARTH003", { from: { id: 654321, is_bot: true, username: "source_bot" } })).json();
+  assert.equal(otherBot.created, true); assert.equal(otherBot.status, "OPEN");
+  const human = await (await webhook("TEST EARTH999", { from: { id: 7, first_name: "Human" } })).json();
+  assert.equal(human.created, true); assert.equal(human.status, "UNASSIGNED");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM cases").get().n, 2);
+
+  env.TELEGRAM_BOT_TOKEN = "malformed-token";
+  const malformed = await (await webhook("TEST EARTH003", { from: { id: 123456, is_bot: true } })).json();
+  assert.equal(malformed.created, true);
 });
 
 test("legacy routes and webhook mapped/unmapped/unmatched/duplicate preservation", async t => {
