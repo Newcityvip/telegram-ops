@@ -4,12 +4,6 @@
   "main": "src/index.js",
   // Confirm the existing Worker's compatibility date before first deployment.
   "compatibility_date": "2026-09-07",
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS",
-    "run_worker_first": true,
-    "html_handling": "none"
-  },
   "d1_databases": [
     {
       "binding": "DB",

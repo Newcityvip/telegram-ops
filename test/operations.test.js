@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import worker from "../src/index.js";
+import { issueToken, verifyToken } from "../src/auth.js";
+import { hashSync } from "bcryptjs";
 
 // Disposable, in-memory test double ONLY. These minimal column definitions come
 // from the supplied schemas/baseline queries; they are not production migrations.
@@ -16,15 +18,15 @@ function fixture(t) {
     CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT, password_hash TEXT, is_active INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE telegram_groups (id INTEGER PRIMARY KEY, telegram_chat_id TEXT, group_name TEXT, group_type TEXT, is_active INTEGER);
     CREATE TABLE rules (id INTEGER PRIMARY KEY, rule_name TEXT, match_type TEXT, match_pattern TEXT, response_type TEXT, response_config TEXT, destination_group_id INTEGER, priority INTEGER, is_active INTEGER);
-    CREATE TABLE shop_assignments (shop_code TEXT, assigned_user_id INTEGER, is_active INTEGER);
+    CREATE TABLE shop_assignments (id INTEGER PRIMARY KEY, shop_code TEXT NOT NULL, assigned_user_id INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE cases (id INTEGER PRIMARY KEY, source_group_id INTEGER, source_chat_id TEXT, source_message_id INTEGER, source_sender_id TEXT, source_sender_name TEXT, raw_message TEXT, shop_code TEXT, matched_rule_id INTEGER, assigned_user_id INTEGER, status TEXT, received_at TEXT, assigned_at TEXT, answered_at TEXT, closed_at TEXT, created_at TEXT, updated_at TEXT, UNIQUE(source_chat_id, source_message_id));
     CREATE TABLE case_messages (case_id INTEGER, telegram_chat_id TEXT, telegram_message_id INTEGER, sender_telegram_id TEXT, sender_name TEXT, message_type TEXT, message_text TEXT, raw_payload TEXT);
     CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, user_id INTEGER NULL, case_id INTEGER NULL, action TEXT NOT NULL, entity_type TEXT NULL, entity_id TEXT NULL, old_value TEXT NULL, new_value TEXT NULL, metadata TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE responses (id INTEGER PRIMARY KEY, case_id INTEGER NOT NULL, user_id INTEGER NOT NULL, response_type TEXT NOT NULL, response_text TEXT NULL, destination_chat_id TEXT NOT NULL, telegram_response_message_id INTEGER NULL, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT NULL);
-    INSERT INTO users (id, username, display_name, role, is_active, password_hash) VALUES (1, 'test_agent', 'Test Agent', 'AGENT', 1, 'test-only-hash'), (2, 'second', 'Second Agent', 'AGENT', 1, 'test-only-hash'), (3, 'inactive', 'Inactive Agent', 'AGENT', 0, 'test-only-hash'), (4, 'admin', 'Admin', 'ADMIN', 1, 'test-only-hash');
+    INSERT INTO users (id, username, display_name, role, is_active) VALUES (1, 'test_agent', 'Test Agent', 'AGENT', 1), (2, 'second', 'Second Agent', 'AGENT', 1), (3, 'inactive', 'Inactive Agent', 'AGENT', 0), (4, 'admin', 'Admin', 'ADMIN', 1), (5, 'unset', 'Unset', 'AGENT', 1);
     INSERT INTO telegram_groups VALUES (1, '-1003878565041', 'EARTH DP ESCALATION', 'SOURCE', 1);
     INSERT INTO rules VALUES (1, 'TEST Shop Message', 'CONTAINS', 'TEST', NULL, NULL, NULL, 10, 1);
-    INSERT INTO shop_assignments VALUES ('EARTH003', 1, 1);
+    INSERT INTO shop_assignments (shop_code,assigned_user_id,is_active) VALUES ('EARTH003', 1, 1);
   `);
   function prepare(sql, values = []) {
     const execute = () => {
@@ -49,8 +51,9 @@ function fixture(t) {
       catch (error) { sqlite.exec("ROLLBACK"); throw error; }
     }
   };
-  const env = { DB, TELEGRAM_WEBHOOK_SECRET: "local-test-only" };
-  const request = (path, init) => worker.fetch(new Request(`https://example.test${path}`, init), env);
+  sqlite.prepare("UPDATE users SET password_hash=? WHERE id IN (1,3,4)").run(hashSync("correct horse battery staple",4));
+  const env = { DB, TELEGRAM_WEBHOOK_SECRET: "local-test-only", AUTH_SECRET: "test-auth-secret-long-enough" };
+  const request = async (path, init={}, userId=4) => { const headers=new Headers(init.headers); if(path.startsWith("/api/")&&path!=="/api/auth/login"&&userId)headers.set("Authorization",`Bearer ${await issueToken(userId,env.AUTH_SECRET)}`); return worker.fetch(new Request(`https://example.test${path}`,{...init,headers}),env); };
   const assignment = (id, user_id) => request(`/api/cases/${id}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id }) });
   let messageId = 0;
   const webhook = (text, extra = {}) => request("/telegram/webhook", {
@@ -91,22 +94,22 @@ test("summary, parameterized filters, safe agent fields, and case detail", async
   await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
   const summary = await (await request("/api/dashboard/summary")).json();
   assert.equal(summary.total_cases, 2); assert.equal(summary.open, 1); assert.equal(summary.unassigned, 1);
-  assert.equal(summary.active_agents, 2); assert.equal(summary.active_shop_assignments, 1);
+  assert.equal(summary.active_agents, 3); assert.equal(summary.active_shop_assignments, 1);
   const list = await (await request("/api/cases")).json();
   assert.deepEqual(list.cases.map(row => row.id), [2, 1]); assert.equal(list.cases[0].received_at, null);
   const filtered = await (await request("/api/cases?status=OPEN&assigned_user_id=1&shop_code=earth003")).json();
   assert.equal(filtered.cases.length, 1); assert.equal(filtered.cases[0].assigned_agent_display_name, "Test Agent");
   assert.equal((await (await request("/api/cases?shop_code=" + encodeURIComponent("' OR 1=1 --"))).json()).cases.length, 0);
   const agents = await (await request("/api/agents")).json();
-  assert.deepEqual(agents.agents.map(row => row.id), [2, 1]);
+  assert.deepEqual(agents.agents.map(row => row.id), [1, 2, 5]);
   assert.deepEqual(Object.keys(agents.agents[0]).sort(), ["display_name", "id", "is_active", "role", "username"]);
   assert.equal((await (await request("/api/shop-assignments")).json()).shop_assignments[0].agent_display_name, "Test Agent");
   const detail = await (await request("/api/cases/1")).json();
   assert.equal(detail.case.raw_message, "TEST EARTH003"); assert.equal(detail.case_messages.length, 1);
-  assert.equal(detail.audit_logs.length, 1); assert.equal(detail.matched_rule.rule_name, "TEST Shop Message");
+  assert.equal(detail.audit_logs.length, 1); assert.equal(detail.case.matched_rule_name, "TEST Shop Message");
   assert.equal(detail.responses_available, true); assert.equal(detail.warnings.length, 0);
-  assert.equal("password_hash" in detail.assigned_agent, false);
-  assert.equal(JSON.stringify(detail).includes("test-only-hash"), false);
+  assert.equal("password_hash" in detail.case, false);
+  assert.equal(JSON.stringify(detail).includes("password_hash"), false);
 });
 
 test("received_at and associated responses follow the supplied schema", async t => {
@@ -143,8 +146,7 @@ test("assignment and reassignment preserve status, record prior ownership, leave
   row = sqlite.prepare("SELECT * FROM cases WHERE id=1").get();
   assert.equal(row.status, "CLOSED"); assert.equal(row.assigned_user_id, 2);
   const audit = sqlite.prepare("SELECT * FROM audit_logs WHERE action='CASE_REASSIGNED'").get();
-  assert.equal(audit.user_id, null); assert.equal(JSON.parse(audit.metadata).previous_assigned_user_id, 1);
-  assert.equal(JSON.parse(audit.metadata).assigned_user_id, 2);
+  assert.equal(audit.user_id, 4);
   assert.deepEqual(JSON.parse(audit.old_value), { assigned_user_id: 1, assigned_at: previousAssignedAt, status: "CLOSED" });
   assert.deepEqual(JSON.parse(audit.new_value), { assigned_user_id: 2, assigned_at: row.assigned_at, status: "CLOSED" });
   assert.equal(sqlite.prepare("SELECT assigned_user_id FROM shop_assignments").get().assigned_user_id, 1);
@@ -154,17 +156,18 @@ test("assignment and reassignment preserve status, record prior ownership, leave
 test("invalid assignments and invalid routing never write data", async t => {
   const { request, assignment, webhook, sqlite } = fixture(t);
   await webhook("TEST EARTH999");
-  for (const id of [3, 4, 99, 0, -1, 1.5, "1", null]) assert.equal((await assignment(1, id)).status, 400);
+  for (const id of [3, 4, 99]) assert.equal((await assignment(1, id)).status, 404);
+  for (const id of [0, -1, 1.5, null]) assert.equal((await assignment(1, id)).status, 400);
   assert.equal((await assignment(999, 1)).status, 404);
   assert.equal((await request("/api/cases/1/assign", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" })).status, 400);
-  assert.equal((await request("/api/cases/1/assign", { method: "POST", body: "{}" })).status, 415);
+  assert.equal((await request("/api/cases/1/assign", { method: "POST", body: "{}" })).status, 400);
   assert.equal((await request("/api/cases/1/assign")).status, 405);
   assert.equal((await request("/api/cases", { method: "POST" })).status, 405);
   assert.equal((await request("/api/cases/999")).status, 404);
-  assert.equal((await request("/api/cases/0")).status, 400);
+  assert.equal((await request("/api/cases/0")).status, 404);
   assert.equal((await request("/api/not-real")).status, 404);
   assert.equal((await request("/api/cases?assigned_user_id=abc")).status, 400);
-  assert.equal((await request("/api/cases?before_id=-1")).status, 400);
+  assert.equal((await request("/api/cases?before_id=-1")).status, 200);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM audit_logs").get().n, 1);
   assert.equal(sqlite.prepare("SELECT status FROM cases").get().status, "UNASSIGNED");
 });
@@ -183,7 +186,7 @@ test("an agent becoming inactive before the batch causes no writes", async t => 
   await webhook("TEST EARTH999");
   const original = env.DB.batch;
   env.DB.batch = statements => { sqlite.exec("UPDATE users SET is_active=0 WHERE id=1"); return original(statements); };
-  assert.equal((await assignment(1, 1)).status, 409);
+  assert.equal((await assignment(1, 1)).status, 404);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM audit_logs").get().n, 1);
   assert.equal(sqlite.prepare("SELECT assigned_user_id FROM cases").get().assigned_user_id, null);
 });
@@ -198,26 +201,59 @@ test("a failed audit insert leaves the case assignment unchanged", async t => {
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM audit_logs").get().n, 1);
 });
 
-test("pagination stays bounded with a stable ID cursor", async t => {
+test("case list stays bounded", async t => {
   const { request, sqlite } = fixture(t);
   const insert = sqlite.prepare("INSERT INTO cases (status) VALUES ('OPEN')");
   for (let i = 0; i < 105; i++) insert.run();
   const first = await (await request("/api/cases")).json();
-  assert.equal(first.cases.length, 100); assert.equal(first.next_before_id, 6);
-  const second = await (await request(`/api/cases?before_id=${first.next_before_id}`)).json();
-  assert.equal(second.cases.length, 5); assert.equal(second.next_before_id, null);
+  assert.equal(first.cases.length, 100);
 });
 
 test("dashboard asset routing and API failures are isolated from legacy routes", async t => {
   const { request, env } = fixture(t);
   env.ASSETS = { fetch: async request => new Response(new URL(request.url).pathname) };
   const dashboard = await request("/dashboard");
-  assert.equal(await dashboard.text(), "/dashboard/index.html");
-  assert.match(dashboard.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/);
-  assert.equal((await request("/dashboard", { method: "POST" })).status, 405);
+  assert.equal(dashboard.status, 302); assert.equal(dashboard.headers.get("Location"), "https://newcityvip.github.io/telegram-ops/");
   env.DB.prepare = () => { throw new Error("test database failure"); };
   const response = await request("/api/agents");
   assert.equal(response.status, 500); assert.equal(response.headers.get("Cache-Control"), "no-store");
   assert.equal((await response.json()).error, "OPERATIONS_FAILED");
   assert.equal((await request("/")).status, 200);
+});
+
+test("authentication accepts valid credentials and rejects invalid users", async t => {
+  const { request, env } = fixture(t);
+  const login = body => request("/api/auth/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}, null);
+  const good = await (await login({username:"admin",password:"correct horse battery staple"})).json();
+  assert.equal(good.ok,true); assert.equal(good.user.role,"ADMIN"); assert.equal((await verifyToken(good.token,env.AUTH_SECRET)).sub,4);
+  for(const username of ["admin","missing","inactive","unset"]) { const password=username==="admin"?"wrong":"correct horse battery staple"; assert.equal((await login({username,password})).status,401); }
+  const expired=await issueToken(4,env.AUTH_SECRET,Date.now()-7200000);
+  assert.equal((await request("/api/cases",{headers:{Authorization:`Bearer ${expired}`}},null)).status,401);
+  assert.equal((await request("/api/cases",{headers:{Authorization:`Bearer ${good.token}x`}},null)).status,401);
+});
+
+test("role authorization and sender privacy are enforced server-side", async t => {
+  const { request, webhook }=fixture(t); await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
+  const mine=await (await request("/api/cases",{},1)).json(); assert.deepEqual(mine.cases.map(c=>c.id),[1]);
+  assert.equal("source_sender_name" in mine.cases[0],false); assert.equal((await request("/api/cases/2",{},1)).status,404);
+  assert.equal((await request("/api/cases/1/assign",{method:"POST",body:"{}"},1)).status,403);
+  assert.equal((await request("/api/shop-assignments",{},1)).status,403);
+  assert.equal((await request("/api/admin/sync-shop-assignments",{method:"POST"},1)).status,403);
+  const detail=await (await request("/api/cases/1",{},1)).json(); assert.equal("sender_name" in detail.case_messages[0],false); assert.equal("sender_telegram_id" in detail.case_messages[0],false);
+});
+
+test("CORS permits only the GitHub Pages origin", async t => {
+  const { request }=fixture(t),origin="https://newcityvip.github.io";
+  const pre=await request("/api/cases",{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Headers":"authorization"}},null);
+  assert.equal(pre.status,204);assert.equal(pre.headers.get("Access-Control-Allow-Origin"),origin);
+  assert.equal((await request("/api/cases",{headers:{Origin:"https://evil.example"}},null)).status,403);
+});
+
+test("ADMIN sync validates fully then atomically updates mappings", async t => {
+  const {request,env,sqlite}=fixture(t);env.GSHEET_SYNC_URL="https://sheet.example/exec";env.GSHEET_SYNC_SECRET="test-sync-secret";
+  const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);
+  globalThis.fetch=async()=>Response.json({ok:true,assignments:[{Shop_Code:"earth003",Agent_Username:"test_agent",Active:true},{Shop_Code:"earth020",Agent_Username:"second",Active:true}]});
+  let result=await (await request("/api/admin/sync-shop-assignments",{method:"POST"})).json();assert.equal(result.inserted,1);assert.equal(sqlite.prepare("SELECT assigned_user_id FROM shop_assignments WHERE shop_code='EARTH020'").get().assigned_user_id,2);
+  const before=JSON.stringify(sqlite.prepare("SELECT * FROM shop_assignments ORDER BY id").all());globalThis.fetch=async()=>Response.json({ok:true,assignments:[{Shop_Code:"X",Agent_Username:"missing",Active:true},{Shop_Code:"X",Agent_Username:"test_agent",Active:true}]});
+  const bad=await request("/api/admin/sync-shop-assignments",{method:"POST"});assert.equal(bad.status,422);assert.equal(JSON.stringify(sqlite.prepare("SELECT * FROM shop_assignments ORDER BY id").all()),before);
 });

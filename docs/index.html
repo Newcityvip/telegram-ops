@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Operations · Telegram Ops</title>
-  <link rel="stylesheet" href="/dashboard/styles.css">
-  <script src="/dashboard/app.js" defer></script>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/dashboard"><span class="brand-mark">T</span> Telegram Ops <span class="edition">OPERATIONS</span></a><span class="poc-label">POC · V1</span></header>
+  <section id="login" class="login"><form id="login-form"><span class="brand-mark">T</span><h1>Telegram Ops</h1><p>Sign in to your operations workspace.</p><label>Username<input id="username" required autocomplete="username"></label><label>Password<input id="password" type="password" required autocomplete="current-password"></label><p id="login-error" class="error" hidden></p><button class="button primary">Sign In</button></form></section><div id="portal" hidden>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">T</span> Telegram Ops</a><span><span id="identity"></span> <button id="logout" class="button">Logout</button></span></header>
   <main>
-    <div class="warning"><strong>Controlled POC · No authentication</strong><span>Anyone with access to this URL can view operational data and assign cases. Not ready for unrestricted production access.</span></div>
     <section class="page-heading"><div><p class="eyebrow">WORKSPACE / OVERVIEW</p><h1>Operations dashboard</h1><p class="subtle">A clear view of incoming cases and agent ownership.</p></div><button id="refresh" class="button">↻ Refresh</button></section>
     <p id="page-error" class="error" role="alert" hidden></p>
     <section class="stats" aria-label="Operations summary">
@@ -32,7 +32,7 @@
       <footer class="table-footer"><span id="case-count" class="subtle" aria-live="polite"></span><button id="load-more" class="button" hidden>Load older cases</button></footer>
     </section>
     <p class="footnote">Telegram ingestion is unchanged. Assigning a case does not change shop mappings or send a Telegram message.</p>
-  </main>
+    <section id="admin-config" class="cases-card"><div class="section-heading"><h2>Shop assignments</h2><button id="sync" class="button primary">Sync from Google Sheet</button></div><p id="sync-result" class="subtle"></p><div id="assignment-list"></div></section></main></div>
   <dialog id="case-dialog" aria-labelledby="detail-title">
     <div class="dialog-heading"><div><p class="eyebrow">CASE DETAILS</p><h2 id="detail-title">Case</h2></div><button id="close-detail" class="icon-button" aria-label="Close case details">✕</button></div>
     <div id="detail-body" class="detail-body"></div>

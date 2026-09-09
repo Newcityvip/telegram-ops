@@ -3,19 +3,17 @@
 Operations dashboard and Telegram ingestion on the existing Cloudflare Worker
 `telegram-ops-api`, using D1 binding `DB` -> `telegram-ops-db`.
 
-**Controlled POC only: `/dashboard` and `/api/*` are temporarily unauthenticated.**
-Anyone who can reach this Worker can read operational messages and assign or
-reassign cases. The warning banner and browser headers are not access control.
-Add real authentication and authorization before unrestricted use. There are no
-passwords, hardcoded credentials, or secret values in this repository.
+The staff portal is hosted at https://newcityvip.github.io/telegram-ops/. Its
+operational APIs require a short-lived signed Bearer token. No secret is present
+in the static frontend.
 
 ## Architecture
 
 - `src/index.js`: supplied Telegram POC implementation, with a small routing hook.
   The original health, database check, and webhook code is preserved.
 - `src/operations.js`: dashboard routing, read APIs, and manual case assignment.
-- `public/dashboard/`: plain HTML, CSS, and vanilla JavaScript. Wrangler serves
-  these assets through `ASSETS`; `run_worker_first` preserves Worker routing.
+- `docs/`: GitHub Pages login and role-aware portal in plain HTML/CSS/JavaScript.
+- `src/auth.js`: bcrypt password verification and one-hour HMAC tokens.
 - `test/operations.test.js`: in-memory SQLite tests, including a source hash
   check against the verified ingestion baseline.
 
@@ -123,6 +121,25 @@ https://telegram-ops-api.mdrobiulislam.workers.dev/dashboard
 
 No Telegram responses, inquiries, Google Sheets sync, authentication, new rules,
 webhook changes, or database migrations are implemented here.
+
+GitHub Pages must use **GitHub Actions** as its deployment source under repository
+Settings → Pages. The workflow publishes `docs/` without repository secrets.
+
+Production must retain `AUTH_SECRET`, `GSHEET_SYNC_URL`, and
+`GSHEET_SYNC_SECRET` as Worker secrets. To prepare an ADMIN password locally, run
+`npm run hash-password`, enter a new password of at least 12 characters, copy the
+resulting bcrypt string, then execute this manually against the intended D1:
+
+```sql
+UPDATE users
+SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+WHERE username = ? AND role = 'ADMIN' AND is_active = 1;
+```
+
+Bind the generated hash and exact existing admin username; verify exactly one row
+changed. Create an ADMIN row manually first only if none exists, supplying the
+existing table's required values and the generated hash. No default password is
+created by this repository.
 
 References: [D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/)
 and [Worker asset bindings](https://developers.cloudflare.com/workers/static-assets/binding/).
