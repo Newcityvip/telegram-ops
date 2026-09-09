@@ -232,6 +232,39 @@ test("authentication accepts valid credentials and rejects invalid users", async
   assert.equal((await request("/api/cases",{headers:{Authorization:`Bearer ${good.token}x`}},null)).status,401);
 });
 
+test("stored sessions restore authoritative ADMIN and AGENT identities", async t => {
+  const { request, env, sqlite, webhook } = fixture(t);
+  await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
+  for (const [id, role] of [[4, "ADMIN"], [1, "AGENT"]]) {
+    const token = await issueToken(id, env.AUTH_SECRET);
+    const session = await request("/api/auth/session", { headers: { Authorization: `Bearer ${token}` } }, null);
+    assert.equal(session.status, 200);
+    const body = await session.json();
+    assert.equal(body.user.id, id); assert.equal(body.user.role, role);
+    assert.equal("password_hash" in body.user, false); assert.equal("is_active" in body.user, false);
+    const cases = await (await request("/api/cases", { headers: { Authorization: `Bearer ${token}` } }, null)).json();
+    assert.deepEqual(cases.cases.map(item => item.id), role === "ADMIN" ? [2, 1] : [1]);
+  }
+  const expired = await issueToken(4, env.AUTH_SECRET, Date.now() - 7200000);
+  assert.equal((await request("/api/auth/session", { headers: { Authorization: `Bearer ${expired}` } }, null)).status, 401);
+  assert.equal((await request("/api/auth/session", { headers: { Authorization: "Bearer malformed" } }, null)).status, 401);
+  sqlite.exec("UPDATE users SET is_active=0 WHERE id=1");
+  const inactive = await issueToken(1, env.AUTH_SECRET);
+  assert.equal((await request("/api/auth/session", { headers: { Authorization: `Bearer ${inactive}` } }, null)).status, 401);
+  sqlite.exec("DELETE FROM users WHERE id=2");
+  const missing = await issueToken(2, env.AUTH_SECRET);
+  assert.equal((await request("/api/auth/session", { headers: { Authorization: `Bearer ${missing}` } }, null)).status, 401);
+});
+
+test("frontend persists only the token and clears it on logout", () => {
+  const source = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
+  assert.match(source, /localStorage\.setItem\("ops-token",token\)/);
+  assert.match(source, /api\("\/api\/auth\/session"\)/);
+  assert.match(source, /localStorage\.removeItem\("ops-token"\)/);
+  assert.equal(source.includes("localStorage.setItem(\"role\""), false);
+  assert.equal(source.includes("localStorage.setItem(\"password\""), false);
+});
+
 test("role authorization and sender privacy are enforced server-side", async t => {
   const { request, webhook }=fixture(t); await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
   const mine=await (await request("/api/cases",{},1)).json(); assert.deepEqual(mine.cases.map(c=>c.id),[1]);

@@ -37,6 +37,7 @@ Message content is rendered as text, never interpreted as HTML.
 | GET | `/api/agents` | Active AGENT users; only id, username, display name, role, active flag |
 | GET | `/api/shop-assignments` | Active mappings joined with agent display names |
 | POST | `/api/cases/:id/assign` | Manual assignment/reassignment with audit |
+| GET | `/api/auth/session` | Validate a stored token and return the current D1-backed user identity |
 | GET | `/api/admin/users` | ADMIN-only safe user list; never returns password hashes |
 | POST | `/api/admin/users` | ADMIN-only creation of an ADMIN or AGENT account |
 | POST | `/api/admin/users/:id/password` | ADMIN-only bcrypt password reset |
@@ -64,6 +65,14 @@ write `USER_CREATED`, `USER_PASSWORD_RESET`, `USER_ACTIVATED`, or
 `USER_DEACTIVATED` audit entries with the acting ADMIN ID. Users are deactivated
 instead of deleted so historical references remain intact. Creating an AGENT
 does not create or change a shop assignment.
+
+The browser persists only the existing short-lived bearer token so a normal page
+reload can restore a session. On every reload, `/api/auth/session` verifies the
+token signature and expiry, then reloads the current active user and role from
+D1 before showing the portal. Invalid, expired, missing-user, and deactivated-user
+sessions are cleared. Logout removes the persisted token immediately. The token
+still expires after one hour; no password, role, identity field, or backend secret
+is trusted from browser storage.
 
 ## Schema compatibility
 
