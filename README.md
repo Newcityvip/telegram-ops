@@ -42,6 +42,7 @@ Message content is rendered as text, never interpreted as HTML.
 | POST | `/api/admin/users` | ADMIN-only creation of an ADMIN or AGENT account |
 | POST | `/api/admin/users/:id/password` | ADMIN-only bcrypt password reset |
 | POST | `/api/admin/users/:id/status` | ADMIN-only activation/deactivation |
+| POST | `/api/cases/:id/respond` | Assigned AGENT sends a configured response to the rule destination |
 
 Case filters: `status`, `assigned_user_id`, `shop_code` (exact match). String
 filters are normalized to uppercase. `next_before_id` is the next page cursor;
@@ -73,6 +74,26 @@ D1 before showing the portal. Invalid, expired, missing-user, and deactivated-us
 sessions are cleared. Logout removes the persisted token immediately. The token
 still expires after one hour; no password, role, identity field, or backend secret
 is trusted from browser storage.
+
+## Agent responses
+
+An AGENT can respond only to a case currently assigned to that same active D1
+user. Case details expose the configured response choices, while Telegram chat
+IDs remain server-side. The Worker validates the choice against the matched
+rule's `response_type` and `response_config`, follows
+`rules.destination_group_id` to an active DESTINATION/BOTH `telegram_groups`
+row, and sends through the existing `TELEGRAM_BOT_TOKEN` secret.
+
+The first supported response type is `YES_NO` (also accepting existing `YES/NO`
+or `YESNO` spellings). A null/empty `response_config` provides `YES` and `NO`;
+an optional JSON string array or `{ "options": [...] }` config can provide two
+to ten configured choices. A response begins as `PENDING` to suppress ordinary
+double-click/retry sends. Telegram rejection changes it to `FAILED` and leaves
+the case unchanged, allowing a retry. Telegram confirmation is followed by one
+D1 batch that marks the response `SENT`, changes the case to `ANSWERED`, records
+`answered_at`, and writes `CASE_RESPONSE_SENT` audit history. The Telegram text
+contains only case ID, shop code, and the selected response; source sender
+identity is excluded.
 
 ## Schema compatibility
 

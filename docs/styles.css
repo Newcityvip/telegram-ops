@@ -423,6 +423,22 @@ dialog::backdrop {
   white-space:pre-wrap;
   overflow-wrap:anywhere
 }
+.response-control {
+  margin:22px 0;
+  padding:18px;
+  border:1px solid #b9ddd9;
+  border-radius:8px;
+  background:#f2fbfa
+}
+.response-control h3 {
+  margin:0 0 6px
+}
+.response-control .button {
+  margin:12px 8px 0 0
+}
+.response-control .error {
+  margin:14px 0 0
+}
 .sr-only {
   position:absolute;
   width:1px;
