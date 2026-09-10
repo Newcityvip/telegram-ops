@@ -188,7 +188,7 @@ if (
     for (const rule of ruleResult.results) {
       if (
         ruleMatches(
-          messageText,
+          ruleMatchingText(messageText),
           rule.match_type,
           rule.match_pattern
         )
@@ -448,6 +448,12 @@ const match = compactMatch || String(text).replace(/https?:\/\/\S+/gi, "").match
 return match
 ? (compactMatch ? match[1] : match[0]).toUpperCase()
 : null;
+}
+
+function ruleMatchingText(text) {
+const firstLine = String(text || "").split(/\r?\n/, 1)[0].trim();
+const compactFollowUp = /^SSP-AG-(?:EARTH|SHAKER)\d+-(?:NG|NAGAD|BK|BKASH|RK|ROCKET|UPAY)-OLD-\d+$/i.test(firstLine);
+return compactFollowUp ? `1st Follow Up\nDeposit\n${text}` : text;
 }
 
 function buildSenderName(from) {

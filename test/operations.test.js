@@ -87,7 +87,10 @@ return match
 }
 
 function buildSenderName`);
-  assert.equal(createHash("sha256").update(source).digest("hex"), "70007cdb8bce382dcec11e55f2c503d00629273252179f9eccfc3df96a0861ae");
+  const normalized = source
+    .replace("ruleMatchingText(messageText)", "messageText")
+    .replace(/\nfunction ruleMatchingText\(text\) \{[\s\S]*?\n\}\n/, "\n");
+  assert.equal(createHash("sha256").update(normalized).digest("hex"), "70007cdb8bce382dcec11e55f2c503d00629273252179f9eccfc3df96a0861ae");
 });
 
 test("webhook ignores only messages authored by the configured bot", async t => {
@@ -129,7 +132,39 @@ test("legacy routes and webhook mapped/unmapped/unmatched/duplicate preservation
   assert.deepEqual(sqlite.prepare("SELECT action FROM audit_logs").all().map(row => row.action), ["CASE_AUTO_ASSIGNED", "CASE_CREATED_UNASSIGNED"]);
 });
 
-test("compact EARTH and SHAKER identifiers use the existing assignment path safely",async t=>{const{webhook,sqlite}=fixture(t);sqlite.exec("INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1),(3,'EARTH020',1,1),(4,'SHAKER091',2,0)");let body=await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966037\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER090",2,"OPEN"]);body=await(await webhook("ssp-ag-earth020-bk-old-123456789\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["EARTH020",1,"OPEN"]);body=await(await webhook("SSP-AG-SHAKER091-RK-OLD-1\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER091",null,"UNASSIGNED"]);body=await(await webhook("TEST EARTH003")).json();assert.deepEqual([body.shop_code,body.assigned_user_id],["EARTH003",1]);assert.deepEqual(sqlite.prepare("SELECT shop_code FROM cases ORDER BY id").all().map(row=>row.shop_code),["SHAKER090","EARTH020","SHAKER091","EARTH003"]);});
+test("production-style compact messages match their configured rule and use normal assignment scoping",async t=>{
+  const{webhook,sqlite,request}=fixture(t);
+  sqlite.exec("UPDATE rules SET rule_name='1st Follow Up - Deposit',match_pattern='1st Follow Up'; INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1),(3,'EARTH020',1,1),(4,'SHAKER091',2,0)");
+  const message=`SSP-AG-SHAKER090-NG-OLD-1344966037\n\n75Y8S4CR\n\n1000\n\nhttps://workflow-media-assets-1.s3.amazonaws.com/uploads/bck1-f0ce29e6-aec4-425d-ab6e-88394f2b788e-image.png\n\nHi team, kindly pls check if received\n- buddhi`;
+  let body=await(await webhook(message)).json();
+  assert.deepEqual([body.created,body.matched_rule,body.shop_code,body.assigned_user_id,body.status],[true,"1st Follow Up - Deposit","SHAKER090",2,"OPEN"]);
+  assert.deepEqual((await(await request("/api/cases",{},2)).json()).cases.map(row=>row.shop_code),["SHAKER090"]);
+  assert.deepEqual((await(await request("/api/cases",{},1)).json()).cases,[]);
+
+  body=await(await webhook(message.replace(/\nhttps:\/\/[^\n]+/,"").replace("1344966037","1344966038"))).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id],["SHAKER090",2]);
+  for(const [wallet,id] of [["BK",1344966039],["RK",1344966040],["UPAY",1344966041]]){
+    body=await(await webhook(`SSP-AG-SHAKER090-${wallet}-OLD-${id}`)).json();
+    assert.deepEqual([body.shop_code,body.assigned_user_id],["SHAKER090",2]);
+  }
+  body=await(await webhook("SSP-AG-EARTH020-NG-OLD-1344966042")).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id],["EARTH020",1]);
+  body=await(await webhook("SSP-AG-SHAKER999-NG-OLD-1344966043")).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER999",null,"UNASSIGNED"]);
+  body=await(await webhook("SSP-AG-SHAKER091-NG-OLD-1344966044")).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER091",null,"UNASSIGNED"]);
+  body=await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966045\nhttps://example.test/EARTH003.png")).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id],["SHAKER090",2]);
+  sqlite.exec("UPDATE rules SET match_pattern='TEST'");
+  body=await(await webhook("TEST EARTH003")).json();
+  assert.deepEqual([body.shop_code,body.assigned_user_id],["EARTH003",1]);
+  sqlite.exec("UPDATE rules SET match_pattern='DOES NOT MATCH'");
+  assert.equal((await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966046")).json()).reason,"NO_MATCHING_RULE");
+  sqlite.exec("UPDATE rules SET match_pattern='1st Follow Up'");
+  const duplicateId=999;
+  assert.equal((await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966047",{message_id:duplicateId})).json()).created,true);
+  assert.equal((await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966047",{message_id:duplicateId})).json()).duplicate,true);
+});
 
 test("shop extraction ignores unrelated numbers, references, amounts, and URLs",async t=>{const{webhook,sqlite}=fixture(t);for(const text of["TEST 01712345678","TEST 75Y8S4CR","TEST Amount: 1000","TEST https://example.com/slips/EARTH090.png"])assert.equal((await(await webhook(text)).json()).shop_code,null);assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM cases WHERE shop_code IS NOT NULL").get().n,0);});
 
