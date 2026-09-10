@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { createContext, runInContext, runInNewContext } from "node:vm";
 import worker from "../src/index.js";
 import { issueToken, verifyToken } from "../src/auth.js";
-import { formatTelegramResponse } from "../src/responses.js";
+import { formatTelegramResponse, parsePaymentDetails } from "../src/responses.js";
 import { normalizeWalletName } from "../src/wallets.js";
 import { compareSync, hashSync } from "bcryptjs";
 
@@ -353,10 +353,17 @@ test("case slip preview validates image URLs and keeps rendering text-only", () 
   assert.match(app, /\^Image\\s\*:/); assert.match(app, /\["http:","https:"\]\.includes\(url\.protocol\)/);
   assert.match(app, /View Slip/); assert.match(app, /showModal\(\)/); assert.match(app, /function closeSlip\(\).*\.close\(\)/);
   assert.match(app, /document\.createTextNode\(line\)/); assert.doesNotMatch(app, /innerHTML/);
+  assert.match(app, /link\.target="_blank"/); assert.match(app, /link\.rel="noopener noreferrer"/);
   assert.match(app, /response_definition/); assert.match(app, /\/respond/);
   assert.match(html, /id="slip-dialog"/); assert.match(html, /target="_blank" rel="noopener noreferrer"/);
   assert.match(html, /slip-zoom-in/); assert.match(html, /slip-zoom-out/); assert.match(html, /slip-reset/);
   assert.match(css, /\.slip-viewport[\s\S]*overflow:auto/); assert.match(css, /object-fit:contain/);
+  const helpers=app.match(/function validSlipUrl[^\n]+\nfunction slipUrl[^\n]+/)?.[0];
+  assert.ok(helpers);
+  const detect=message=>runInNewContext(`${helpers};slipUrl(message)`,{message,URL});
+  assert.equal(detect("https://example.test/slip.png"),"https://example.test/slip.png");
+  assert.equal(detect("Image: http://example.test/slip.jpg"),"http://example.test/slip.jpg");
+  for(const value of["javascript:alert(1)","data:image/png;base64,abc","file:///tmp/slip.png",""])assert.equal(detect(value),null);
 });
 
 test("role authorization and sender privacy are enforced server-side", async t => {
@@ -516,7 +523,7 @@ test("assigned AGENT sends a configured response to the rule destination", async
   const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "yes" }) }, 1);
   assert.equal(response.status, 200); assert.equal((await response.json()).response_status, "SENT");
   assert.equal(calls.length, 1); assert.equal(calls[0].body.chat_id, "-2001");
-  assert.equal(calls[0].body.text, "Shop Name: EARTH3\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: Yes");
+  assert.equal(calls[0].body.text, "Shop Name: EARTH003\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: Yes");
   assert.equal(calls[0].body.text.includes("Test Sender"), false);
   const saved = sqlite.prepare("SELECT * FROM responses WHERE case_id=1").get();
   assert.equal(saved.status, "SENT"); assert.equal(saved.response_type, "YES"); assert.equal(saved.response_text, "YES"); assert.equal(saved.telegram_response_message_id, 701); assert.ok(saved.sent_at);
@@ -531,12 +538,38 @@ test("assigned AGENT sends a configured response to the rule destination", async
 
 test("outbound Telegram format parses shops, wallets, amount, reference, and statuses", () => {
   const source = (shop, wallet) => `1st Follow Up\nDeposit\nAgent: ESS-AG1-${shop}-${wallet}\nRef: 75X8NCTO\nAmount: 2900\nCustomer: Private`;
-  assert.equal(formatTelegramResponse("EARTH020", source("EARTH020", "NAGAD"), "YES — RECEIVED"), "Shop Name: EARTH20\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: YES Received");
-  assert.match(formatTelegramResponse("EARTH003", source("EARTH003", "BK"), "NO — NOT RECEIVED"), /Shop Name: EARTH3\nWallet Type: Bkash/);
+  assert.equal(formatTelegramResponse("EARTH020", source("EARTH020", "NAGAD"), "YES — RECEIVED"), "Shop Name: EARTH020\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: YES Received");
+  assert.match(formatTelegramResponse("EARTH003", source("EARTH003", "BK"), "NO — NOT RECEIVED"), /Shop Name: EARTH003\nWallet Type: Bkash/);
   assert.match(formatTelegramResponse("EARTH003", source("EARTH003", "RK"), "NEED VIDEO PROOF"), /Wallet Type: Rocket[\s\S]*Status: Need Video Proof/);
-  assert.match(formatTelegramResponse("SHAKER012", source("SHAKER012", "BKASH"), "INCORRECT AMOUNT"), /Shop Name: SHAKER12\nWallet Type: Bkash[\s\S]*Status: Incorrect Amount/);
+  assert.match(formatTelegramResponse("SHAKER012", source("SHAKER012", "BKASH"), "INCORRECT AMOUNT"), /Shop Name: SHAKER012\nWallet Type: Bkash[\s\S]*Status: Incorrect Amount/);
   assert.match(formatTelegramResponse("SHAKER012", source("SHAKER012", "ROCKET"), "INCORRECT REFERENCE"), /Wallet Type: Rocket[\s\S]*Status: Incorrect Reference/);
   assert.match(formatTelegramResponse("EARTH020", source("EARTH020", "MOBILE_WALLET"), "INCORRECT WALLET"), /Wallet Type: Mobile Wallet[\s\S]*Status: Incorrect Wallet/);
+});
+
+test("compact payment details preserve structural references, amounts, and canonical shop codes",async t=>{
+  const production=`SSP-AG-SHAKER090-NG-OLD-1344966037\n\n75Y8S4CR\n\n1000\n\nhttps://workflow-media-assets-1.s3.amazonaws.com/uploads/bck1-f0ce29e6-aec4-425d-ab6e-88394f2b788e-image.png\n\nHi team, kindly pls check if received\n- buddhi`;
+  assert.deepEqual(parsePaymentDetails(production),{compactShopCode:"SHAKER090",wallet:"Nagad",amount:"1000",reference:"75Y8S4CR"});
+  assert.match(formatTelegramResponse("SHAKER090",production,"NEED VIDEO PROOF"),/^Shop Name: SHAKER090\nWallet Type: Nagad\nAmount: 1000\nReference: 75Y8S4CR\nStatus: Need Video Proof$/);
+  const withoutUrl=production.replace(/\nhttps:\/\/[^\n]+/,"");
+  assert.equal(parsePaymentDetails(withoutUrl).reference,"75Y8S4CR");
+  for(const [wallet,reference,name] of [["BK","ABC123XYZ","Bkash"],["NG","8K3P91QX","Nagad"],["RK","6845052296","Rocket"],["UPAY","UP123ABC","Upay"]]){
+    const details=parsePaymentDetails(`SSP-AG-SHAKER090-${wallet}-OLD-1344966037\n\n${reference}\n\n1000\n\nhttps://example.test/1234-ABC567.png`);
+    assert.deepEqual([details.wallet,details.reference,details.amount],[name,reference,"1000"]);
+  }
+  assert.equal(parsePaymentDetails("SSP-AG-SHAKER090-RK-OLD-1344966037\n\nhttps://example.test/6845052296.png\n\n1000").reference,"Not provided");
+
+  const{webhook,sqlite,request,env}=fixture(t);
+  sqlite.exec("UPDATE rules SET rule_name='1st Follow Up - Deposit',match_pattern='1st Follow Up',response_type='YES_NO',response_config='[\"YES — RECEIVED\",\"NEED VIDEO PROOF\"]',destination_group_id=2; INSERT INTO telegram_groups VALUES(2,'-2001','Responses','DESTINATION',1); INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1)");
+  env.TELEGRAM_BOT_TOKEN="test-bot-token";
+  const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);let sent;
+  globalThis.fetch=async(_url,options)=>{sent=JSON.parse(options.body);return Response.json({ok:true,result:{message_id:77}})};
+  const created=await(await webhook(production)).json();
+  assert.deepEqual([created.shop_code,created.assigned_user_id],["SHAKER090",2]);
+  const response=await request(`/api/cases/${created.case_id}/respond`,{method:"POST",body:JSON.stringify({response:"NEED VIDEO PROOF"})},2);
+  assert.equal(response.status,200);
+  assert.match(sent.text,/Shop Name: SHAKER090[\s\S]*Reference: 75Y8S4CR/);
+  assert.equal(sqlite.prepare("SELECT raw_message FROM cases WHERE id=?").get(created.case_id).raw_message,production);
+  assert.equal(JSON.parse(sqlite.prepare("SELECT raw_payload FROM case_messages WHERE case_id=?").get(created.case_id).raw_payload).message.text,production);
 });
 
 test("response authorization and configured values are enforced", async t => {

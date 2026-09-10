@@ -10,17 +10,27 @@ const responseStatuses = {
   "INCORRECT REFERENCE": "Incorrect Reference",
   "INCORRECT WALLET": "Incorrect Wallet"
 };
-const lineValue = (message, label) => String(message || "").match(new RegExp(`^${label}\\s*:\\s*([^\\r\\n]+)`, "im"))?.[1].trim() || "Not provided";
+const lineValue = (message, label) => String(message || "").match(new RegExp(`^${label}\\s*:\\s*([^\\r\\n]+)`, "im"))?.[1].trim() || null;
 const readable = (value) => String(value || "").replace(/[_-]+/g, " ").trim().toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Unknown";
 
+export function parsePaymentDetails(rawMessage) {
+  const lines = String(rawMessage || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const compact = lines[0]?.match(/^SSP-AG-((?:EARTH|SHAKER)\d+)-([A-Z]+)-OLD-\d+$/i);
+  const compactReference = compact && /^[A-Z0-9]+$/i.test(lines[1] || "") ? lines[1] : null;
+  const compactAmount = compact && /^\d+(?:[.,]\d+)?$/.test(lines[2] || "") ? lines[2] : null;
+  const agent = lineValue(rawMessage, "Agent");
+  const walletCode = agent ? agent.split("-").at(-1).trim().toUpperCase() : compact?.[2] || "";
+  return {
+    compactShopCode: compact?.[1]?.toUpperCase() || null,
+    wallet: normalizeWalletName(walletCode) || (agent ? readable(walletCode) : "Unknown"),
+    amount: lineValue(rawMessage, "Amount") || compactAmount || "Not provided",
+    reference: lineValue(rawMessage, "Ref") || compactReference || "Not provided"
+  };
+}
+
 export function formatTelegramResponse(shopCode, rawMessage, selected) {
-  const shopMatch = String(shopCode || "").trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
-  const shop = shopMatch ? `${shopMatch[1]}${shopMatch[2].replace(/^0+(?=\d)/, "")}` : String(shopCode || "Not provided").trim();
-  const agent = lineValue(rawMessage, "Agent"), compact = String(rawMessage || "").split(/\r?\n/,1)[0];
-  const walletCode = agent === "Not provided" ? compact.split("-").map((part) => part.trim().toUpperCase()).findLast((part) => normalizeWalletName(part)) || "" : agent.split("-").at(-1).trim().toUpperCase();
-  const wallet = normalizeWalletName(walletCode) || readable(walletCode);
-  const amount = lineValue(rawMessage, "Amount");
-  const reference = lineValue(rawMessage, "Ref");
+  const shop = String(shopCode || "Not provided").trim().toUpperCase();
+  const { wallet, amount, reference } = parsePaymentDetails(rawMessage);
   const status = responseStatuses[selected] || readable(selected);
   return `Shop Name: ${shop}\nWallet Type: ${wallet}\nAmount: ${amount}\nReference: ${reference}\nStatus: ${status}`;
 }
