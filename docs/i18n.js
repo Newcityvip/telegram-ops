@@ -1,3 +1,4 @@
+(() => {
 const translations = {
   bn: {
     "Sign in to your operations workspace.": "আপনার অপারেশনস ওয়ার্কস্পেসে সাইন ইন করুন।",
@@ -112,3 +113,4 @@ function setLanguage(value) {
 }
 
 window.opsI18n = { t, applyLanguage, setLanguage, getLanguage: () => language };
+})();
