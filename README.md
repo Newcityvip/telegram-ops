@@ -43,6 +43,10 @@ Message content is rendered as text, never interpreted as HTML.
 | POST | `/api/admin/users/:id/password` | ADMIN-only bcrypt password reset |
 | POST | `/api/admin/users/:id/status` | ADMIN-only activation/deactivation |
 | POST | `/api/cases/:id/respond` | Assigned AGENT sends a configured response to the rule destination |
+| GET | `/api/followup-groups` | Active logical follow-up group names for authenticated staff |
+| GET | `/api/followup-requests` | Own AGENT history or complete ADMIN history |
+| GET | `/api/followup-requests/:id` | Scoped read-only follow-up request details |
+| POST | `/api/followup-requests` | Submit and send an authenticated follow-up request |
 
 Case filters: `status`, `assigned_user_id`, `shop_code` (exact match). String
 filters are normalized to uppercase. `next_before_id` is the next page cursor;
@@ -117,6 +121,16 @@ Response history keeps the rule/UI type separate from the stored response
 category. A literal standard `YES` or `NO` is stored with that same
 `responses.response_type`; other configured choices use `TEXT`. In every case,
 `responses.response_text` preserves the exact selected choice.
+
+## Follow Up Requests
+
+Authenticated ADMIN and AGENT users can submit independent Off Wallet or Close
+Shop requests. The Worker validates all business fields, resolves the selected
+active group from `followup_groups`, stores the request as `PENDING`, and sends
+it using the existing Telegram bot secret. Successful requests become `SENT`;
+delivery failures remain in history as `FAILED` with a safe diagnostic. Agents
+see only their own history, while administrators see all requests. Routing chat
+IDs and Telegram tags remain server-side.
 
 ## Schema compatibility
 
