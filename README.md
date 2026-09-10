@@ -46,6 +46,7 @@ Message content is rendered as text, never interpreted as HTML.
 | GET | `/api/followup-groups` | Active logical follow-up group names for authenticated staff |
 | GET | `/api/followup-requests` | Own AGENT history or complete ADMIN history |
 | GET | `/api/followup-requests/:id` | Scoped read-only follow-up request details |
+| POST | `/api/followup-requests/preview` | Validate and render a follow-up without storing or sending it |
 | POST | `/api/followup-requests` | Submit and send an authenticated follow-up request |
 
 Case filters: `status`, `assigned_user_id`, `shop_code` (exact match). String
@@ -131,6 +132,10 @@ it using the existing Telegram bot secret. Successful requests become `SENT`;
 delivery failures remain in history as `FAILED` with a safe diagnostic. Agents
 see only their own history, while administrators see all requests. Routing chat
 IDs and Telegram tags remain server-side.
+
+The portal validates and renders the complete server-formatted message in a
+separate review step before submission. Close Shop request type and reason are
+required operator-entered text; their examples are placeholders only.
 
 ## Schema compatibility
 

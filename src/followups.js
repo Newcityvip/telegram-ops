@@ -1,7 +1,5 @@
 const TYPES = new Set(["OFF_WALLET", "CLOSE_SHOP"]);
 const WALLETS = { NAGAD: "Nagad", BK: "Bkash", BKASH: "Bkash", RK: "Rocket", ROCKET: "Rocket" };
-const CLOSE_REQUEST_TYPES = new Set(["Request to close this wallet and withdraw all remaining balance"]);
-const CLOSE_REASONS = new Set(["This wallet will be replaced with a new agent number"]);
 const text = (value, max = 200) => typeof value === "string" && value.trim() && value.trim().length <= max && !/[\r\n]/.test(value) ? value.trim() : null;
 const amount = (value) => { const clean = text(value, 50); if (!clean || !/^\d+(?:\.\d{1,2})?$/.test(clean)) return null; const [whole, decimal] = clean.split("."), normalized = whole.replace(/^0+(?=\d)/, ""); return decimal ? `${normalized}.${decimal.replace(/0+$/, "")}`.replace(/\.$/, "") : normalized; };
 const wallet = (value) => WALLETS[String(value || "").trim().toUpperCase()] || null;
@@ -22,16 +20,28 @@ function validated(body, group) {
     return { request_type: requestType, shop_group: shopGroup, shop_name: shopName, wallet_number: walletNumber, wallet_type: walletType, off_from: offFrom, current_balance: currentBalance, b2b_due: b2bDue, close_request_type: null, close_reason: null };
   }
   const closeType = text(body.close_request_type), reason = text(body.close_reason);
-  if (!CLOSE_REQUEST_TYPES.has(closeType) || !CLOSE_REASONS.has(reason) || text(body.off_from) || text(body.current_balance) || text(body.b2b_due)) return null;
+  if (!closeType || !reason || text(body.off_from) || text(body.current_balance) || text(body.b2b_due)) return null;
   return { request_type: requestType, shop_group: shopGroup, shop_name: shopName, wallet_number: walletNumber, wallet_type: walletType, off_from: null, current_balance: null, b2b_due: null, close_request_type: closeType, close_reason: reason };
 }
 
-async function submit(request, env, user) {
+async function prepare(request, env) {
   let body; try { body = await request.json(); } catch { return { error: "INVALID_JSON", status: 400 }; }
   const groupName = typeof body?.shop_group === "string" ? body.shop_group.trim().toUpperCase() : "";
   const group = groupName ? await env.DB.prepare("SELECT shop_group,telegram_chat_id,telegram_tag FROM followup_groups WHERE shop_group=? AND is_active=1 LIMIT 1").bind(groupName).first() : null;
   if (!group) return { error: "FOLLOWUP_GROUP_UNAVAILABLE", status: 409 };
-  const item = validated(body, group); if (!item) return { error: "INVALID_FOLLOWUP_REQUEST", status: 400 };
+  const item = validated(body, group);
+  return item ? { item, group, body } : { error: "INVALID_FOLLOWUP_REQUEST", status: 400 };
+}
+
+async function preview(request, env) {
+  const prepared = await prepare(request, env);
+  return prepared.error ? prepared : { ok: true, message: formatFollowupMessage(prepared.item, prepared.group.telegram_tag) };
+}
+
+async function submit(request, env, user) {
+  const prepared = await prepare(request, env); if (prepared.error) return prepared;
+  const { item, group } = prepared;
+  if (typeof prepared.body.preview_message === "string" && prepared.body.preview_message !== formatFollowupMessage(item, group.telegram_tag)) return { error: "FOLLOWUP_PREVIEW_STALE", status: 409 };
   if (!env.TELEGRAM_BOT_TOKEN) return { error: "TELEGRAM_NOT_CONFIGURED", status: 503 };
   let insert;
   try { insert = await env.DB.prepare(`INSERT INTO followup_requests(user_id,request_type,shop_group,shop_name,wallet_number,wallet_type,off_from,current_balance,b2b_due,close_request_type,close_reason,destination_chat_id,telegram_tag,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING')`).bind(user.id,item.request_type,item.shop_group,item.shop_name,item.wallet_number,item.wallet_type,item.off_from,item.current_balance,item.b2b_due,item.close_request_type,item.close_reason,group.telegram_chat_id,group.telegram_tag).run(); }
@@ -50,6 +60,7 @@ async function detail(env, user, id) { if (!/^\d+$/.test(id)) return { error: "F
 
 export async function handleFollowups(request, env, user, path) {
   if (path === "/api/followup-groups") { if (request.method !== "GET") return { error: "METHOD_NOT_ALLOWED", status: 405 }; const rows = await env.DB.prepare("SELECT shop_group FROM followup_groups WHERE is_active=1 ORDER BY shop_group").all(); return { ok: true, groups: rows.results.map((row) => row.shop_group) }; }
+  if (path === "/api/followup-requests/preview") return request.method === "POST" ? preview(request,env) : { error: "METHOD_NOT_ALLOWED", status: 405 };
   if (path === "/api/followup-requests") return request.method === "GET" ? list(env,user) : request.method === "POST" ? submit(request,env,user) : { error: "METHOD_NOT_ALLOWED", status: 405 };
   const match = path.match(/^\/api\/followup-requests\/(\d+)$/); return match && request.method === "GET" ? detail(env,user,match[1]) : { error: "NOT_FOUND", status: 404 };
 }

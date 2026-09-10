@@ -592,3 +592,5 @@ dialog::backdrop {
     padding:10px
   }
 }
+
+#followup-review .message{white-space:pre-wrap;overflow-wrap:anywhere}
