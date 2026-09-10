@@ -113,6 +113,11 @@ without storing response bodies, request URLs, credentials, or secrets. If
 Telegram succeeds but the final D1 batch fails, the response remains `PENDING`
 to prevent a retry from sending a duplicate message.
 
+Response history keeps the rule/UI type separate from the stored response
+category. A literal standard `YES` or `NO` is stored with that same
+`responses.response_type`; other configured choices use `TEXT`. In every case,
+`responses.response_text` preserves the exact selected choice.
+
 ## Schema compatibility
 
 No production schema or data is created or changed by setup, build, or tests.

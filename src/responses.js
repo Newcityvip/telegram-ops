@@ -1,4 +1,5 @@
 const validId = (value) => /^\d+$/.test(String(value)) && Number(value) > 0;
+const storedResponseType = (selected) => ["YES", "NO"].includes(selected) ? selected : "TEXT";
 
 export function responseDefinition(type, config) {
   const normalizedType = String(type || "").trim().toUpperCase();
@@ -59,7 +60,7 @@ export async function respondToCase(request, env, user, caseId) {
       WHERE NOT EXISTS (
         SELECT 1 FROM responses WHERE case_id = ? AND status IN ('PENDING', 'SENT')
       )
-    `).bind(caseId, user.id, definition.type, selected, destination.telegram_chat_id, caseId).run();
+    `).bind(caseId, user.id, storedResponseType(selected), selected, destination.telegram_chat_id, caseId).run();
   } catch { return { error: "RESPONSE_STORAGE_FAILED", status: 500 }; }
   if (!claim.meta.changes) return { error: "RESPONSE_ALREADY_SUBMITTED", status: 409 };
   const responseId = Number(claim.meta.last_row_id);

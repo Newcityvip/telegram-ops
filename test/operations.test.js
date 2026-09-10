@@ -22,7 +22,7 @@ function fixture(t) {
     CREATE TABLE cases (id INTEGER PRIMARY KEY, source_group_id INTEGER, source_chat_id TEXT, source_message_id INTEGER, source_sender_id TEXT, source_sender_name TEXT, raw_message TEXT, shop_code TEXT, matched_rule_id INTEGER, assigned_user_id INTEGER, status TEXT, received_at TEXT, assigned_at TEXT, answered_at TEXT, closed_at TEXT, created_at TEXT, updated_at TEXT, UNIQUE(source_chat_id, source_message_id));
     CREATE TABLE case_messages (case_id INTEGER, telegram_chat_id TEXT, telegram_message_id INTEGER, sender_telegram_id TEXT, sender_name TEXT, message_type TEXT, message_text TEXT, raw_payload TEXT);
     CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, user_id INTEGER NULL, case_id INTEGER NULL, action TEXT NOT NULL, entity_type TEXT NULL, entity_id TEXT NULL, old_value TEXT NULL, new_value TEXT NULL, metadata TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE responses (id INTEGER PRIMARY KEY, case_id INTEGER NOT NULL, user_id INTEGER NOT NULL, response_type TEXT NOT NULL, response_text TEXT NULL, destination_chat_id TEXT NOT NULL, telegram_response_message_id INTEGER NULL, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT NULL);
+    CREATE TABLE responses (id INTEGER PRIMARY KEY, case_id INTEGER NOT NULL, user_id INTEGER NOT NULL, response_type TEXT NOT NULL CHECK (response_type IN ('YES','NO','TEMPLATE','TEXT','REASON')), response_text TEXT NULL, destination_chat_id TEXT NOT NULL, telegram_response_message_id INTEGER NULL, status TEXT NOT NULL DEFAULT 'PENDING', error_message TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT NULL);
     INSERT INTO users (id, username, display_name, role, is_active) VALUES (1, 'test_agent', 'Test Agent', 'AGENT', 1), (2, 'second', 'Second Agent', 'AGENT', 1), (3, 'inactive', 'Inactive Agent', 'AGENT', 0), (4, 'admin', 'Admin', 'ADMIN', 1), (5, 'unset', 'Unset', 'AGENT', 1);
     INSERT INTO telegram_groups VALUES (1, '-1003878565041', 'EARTH DP ESCALATION', 'SOURCE', 1);
     INSERT INTO rules VALUES (1, 'TEST Shop Message', 'CONTAINS', 'TEST', NULL, NULL, NULL, 10, 1);
@@ -417,7 +417,7 @@ test("assigned AGENT sends a configured response to the rule destination", async
   assert.equal(calls.length, 1); assert.equal(calls[0].body.chat_id, "-2001");
   assert.match(calls[0].body.text, /Case #1.*EARTH003.*YES/); assert.equal(calls[0].body.text.includes("Test Sender"), false);
   const saved = sqlite.prepare("SELECT * FROM responses WHERE case_id=1").get();
-  assert.equal(saved.status, "SENT"); assert.equal(saved.response_text, "YES"); assert.equal(saved.telegram_response_message_id, 701); assert.ok(saved.sent_at);
+  assert.equal(saved.status, "SENT"); assert.equal(saved.response_type, "YES"); assert.equal(saved.response_text, "YES"); assert.equal(saved.telegram_response_message_id, 701); assert.ok(saved.sent_at);
   const after = await (await request("/api/cases/1", {}, 1)).json(); assert.equal("destination_chat_id" in after.responses[0], false);
   const item = sqlite.prepare("SELECT status,answered_at FROM cases WHERE id=1").get();
   assert.equal(item.status, "ANSWERED"); assert.ok(item.answered_at);
@@ -466,7 +466,8 @@ test("Telegram failure is recorded as failed and does not answer the case", asyn
   await webhook("TEST EARTH003");
   const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "NO" }) }, 1);
   assert.equal(response.status, 502); assert.equal((await response.json()).error, "TELEGRAM_SEND_FAILED");
-  const saved = sqlite.prepare("SELECT status,error_message,sent_at FROM responses").get();
+  const saved = sqlite.prepare("SELECT response_type,response_text,status,error_message,sent_at FROM responses").get();
+  assert.equal(saved.response_type, "NO"); assert.equal(saved.response_text, "NO");
   assert.equal(saved.status, "FAILED"); assert.equal(saved.error_message, "Telegram rejected request (HTTP 400)"); assert.equal(saved.sent_at, null);
   assert.equal(sqlite.prepare("SELECT status FROM cases WHERE id=1").get().status, "OPEN");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get().n, 0);
@@ -485,21 +486,28 @@ test("different rules resolve different Telegram destination groups", async t =>
   const adminDetail = await (await request("/api/cases/2")).json(); assert.equal(adminDetail.destination_group_name, "SHAKER Responses");
 });
 
-test("rule-specific six-choice configuration is rendered and persisted exactly", async t => {
+test("all six rule-specific choices satisfy the production response type constraint", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
   const choices = ["YES — RECEIVED", "NO — NOT RECEIVED", "NEED VIDEO PROOF", "INCORRECT AMOUNT", "INCORRECT REFERENCE", "INCORRECT WALLET"];
   sqlite.prepare("INSERT INTO telegram_groups VALUES (2, '-2001', 'Deposit Responses', 'DESTINATION', 1)").run();
   sqlite.prepare("UPDATE rules SET rule_name='1st Follow Up - Deposit', response_type='YES_NO', response_config=?, destination_group_id=2 WHERE id=1").run(JSON.stringify(choices));
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original);
-  globalThis.fetch = async () => Response.json({ ok: true, result: { message_id: 901 } });
+  let telegramMessageId = 900;
+  globalThis.fetch = async () => Response.json({ ok: true, result: { message_id: ++telegramMessageId } });
   await webhook("TEST EARTH003");
   const detail = await (await request("/api/cases/1", {}, 1)).json();
   assert.deepEqual(detail.response_definition.options, choices);
-  const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "NEED VIDEO PROOF" }) }, 1);
-  assert.equal(response.status, 200);
-  assert.equal(sqlite.prepare("SELECT response_text FROM responses").get().response_text, "NEED VIDEO PROOF");
-  assert.equal(sqlite.prepare("SELECT new_value FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get().new_value, "NEED VIDEO PROOF");
+  for (const [index, choice] of choices.entries()) {
+    if (index) await webhook("TEST EARTH003");
+    const caseId = index + 1;
+    const response = await request(`/api/cases/${caseId}/respond`, { method: "POST", body: JSON.stringify({ response: choice }) }, 1);
+    assert.equal(response.status, 200);
+    const saved = sqlite.prepare("SELECT response_type,response_text FROM responses WHERE case_id=?").get(caseId);
+    assert.equal(saved.response_type, "TEXT");
+    assert.equal(saved.response_text, choice);
+    assert.equal(sqlite.prepare("SELECT new_value FROM audit_logs WHERE case_id=? AND action='CASE_RESPONSE_SENT'").get(caseId).new_value, choice);
+  }
 });
 
 test("response finalization failures return a safe diagnostic and remain retry-blocked", async t => {
