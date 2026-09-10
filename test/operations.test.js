@@ -467,7 +467,7 @@ test("Telegram failure is recorded as failed and does not answer the case", asyn
   const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "NO" }) }, 1);
   assert.equal(response.status, 502); assert.equal((await response.json()).error, "TELEGRAM_SEND_FAILED");
   const saved = sqlite.prepare("SELECT status,error_message,sent_at FROM responses").get();
-  assert.equal(saved.status, "FAILED"); assert.equal(saved.error_message, "Telegram send failed"); assert.equal(saved.sent_at, null);
+  assert.equal(saved.status, "FAILED"); assert.equal(saved.error_message, "Telegram rejected request (HTTP 400)"); assert.equal(saved.sent_at, null);
   assert.equal(sqlite.prepare("SELECT status FROM cases WHERE id=1").get().status, "OPEN");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get().n, 0);
 });
@@ -483,4 +483,38 @@ test("different rules resolve different Telegram destination groups", async t =>
   assert.equal((await request("/api/cases/2/respond", { method: "POST", body: JSON.stringify({ response: "NO" }) }, 1)).status, 200);
   assert.deepEqual(chats, ["-2001", "-3001"]);
   const adminDetail = await (await request("/api/cases/2")).json(); assert.equal(adminDetail.destination_group_name, "SHAKER Responses");
+});
+
+test("rule-specific six-choice configuration is rendered and persisted exactly", async t => {
+  const { request, webhook, sqlite, env } = fixture(t);
+  const choices = ["YES — RECEIVED", "NO — NOT RECEIVED", "NEED VIDEO PROOF", "INCORRECT AMOUNT", "INCORRECT REFERENCE", "INCORRECT WALLET"];
+  sqlite.prepare("INSERT INTO telegram_groups VALUES (2, '-2001', 'Deposit Responses', 'DESTINATION', 1)").run();
+  sqlite.prepare("UPDATE rules SET rule_name='1st Follow Up - Deposit', response_type='YES_NO', response_config=?, destination_group_id=2 WHERE id=1").run(JSON.stringify(choices));
+  env.TELEGRAM_BOT_TOKEN = "test-bot-token";
+  const original = globalThis.fetch; t.after(() => globalThis.fetch = original);
+  globalThis.fetch = async () => Response.json({ ok: true, result: { message_id: 901 } });
+  await webhook("TEST EARTH003");
+  const detail = await (await request("/api/cases/1", {}, 1)).json();
+  assert.deepEqual(detail.response_definition.options, choices);
+  const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "NEED VIDEO PROOF" }) }, 1);
+  assert.equal(response.status, 200);
+  assert.equal(sqlite.prepare("SELECT response_text FROM responses").get().response_text, "NEED VIDEO PROOF");
+  assert.equal(sqlite.prepare("SELECT new_value FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get().new_value, "NEED VIDEO PROOF");
+});
+
+test("response finalization failures return a safe diagnostic and remain retry-blocked", async t => {
+  const { request, webhook, sqlite, env } = fixture(t);
+  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', destination_group_id=2 WHERE id=1");
+  env.TELEGRAM_BOT_TOKEN = "test-bot-token";
+  const original = globalThis.fetch; t.after(() => globalThis.fetch = original); let sends = 0;
+  globalThis.fetch = async () => { sends++; return Response.json({ ok: true, result: { message_id: 902 } }); };
+  await webhook("TEST EARTH003");
+  sqlite.exec("CREATE TRIGGER reject_response_audit BEFORE INSERT ON audit_logs WHEN NEW.action='CASE_RESPONSE_SENT' BEGIN SELECT RAISE(ABORT, 'test finalization failure'); END");
+  let response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1);
+  assert.equal(response.status, 500); assert.equal((await response.json()).error, "RESPONSE_FINALIZATION_FAILED");
+  const saved = sqlite.prepare("SELECT status,error_message FROM responses").get();
+  assert.equal(saved.status, "PENDING"); assert.equal(saved.error_message, "Response finalization failed");
+  assert.equal(sqlite.prepare("SELECT status FROM cases WHERE id=1").get().status, "OPEN");
+  response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1);
+  assert.equal(response.status, 409); assert.equal(sends, 1);
 });

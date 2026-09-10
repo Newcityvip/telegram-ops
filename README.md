@@ -95,6 +95,24 @@ D1 batch that marks the response `SENT`, changes the case to `ANSWERED`, records
 contains only case ID, shop code, and the selected response; source sender
 identity is excluded.
 
+For `1st Follow Up - Deposit`, configure its six choices in D1 rather than in
+application code:
+
+```sql
+UPDATE rules
+SET response_type = 'YES_NO',
+    response_config = '["YES — RECEIVED","NO — NOT RECEIVED","NEED VIDEO PROOF","INCORRECT AMOUNT","INCORRECT REFERENCE","INCORRECT WALLET"]'
+WHERE id = 2
+  AND rule_name = '1st Follow Up - Deposit';
+```
+
+Response API failures use safe specific codes for rule configuration,
+destination lookup, Telegram delivery, response storage, and finalization.
+Telegram delivery failures store a bounded category such as an HTTP status,
+without storing response bodies, request URLs, credentials, or secrets. If
+Telegram succeeds but the final D1 batch fails, the response remains `PENDING`
+to prevent a retry from sending a duplicate message.
+
 ## Schema compatibility
 
 No production schema or data is created or changed by setup, build, or tests.
