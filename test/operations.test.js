@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
 import worker from "../src/index.js";
 import { issueToken, verifyToken } from "../src/auth.js";
 import { formatTelegramResponse } from "../src/responses.js";
+import { normalizeWalletName } from "../src/wallets.js";
 import { compareSync, hashSync } from "bcryptjs";
 
 // Disposable, in-memory test double ONLY. These minimal column definitions come
@@ -66,12 +68,25 @@ function fixture(t) {
   return { sqlite, env, request, assignment, webhook };
 }
 
-test("original ingestion source is byte-identical after removing only routing and own-bot guard", () => {
+test("original ingestion source is byte-identical outside routing, own-bot guard, and shop parser", () => {
   const source = readFileSync(new URL("../src/index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n")
     .replace('import { handleOperations } from "./operations.js";\n\n', "")
     .replace('const operationsResponse = await handleOperations(request, env, url);\nif (operationsResponse) return operationsResponse;\n', "")
     .replace(/\n    \/\/ OWN BOT LOOP GUARD\n[\s\S]*?    \/\/ END OWN BOT LOOP GUARD\n/, "")
-    .replace(/\n\/\/ OWN BOT ID HELPER\n[\s\S]*?\/\/ END OWN BOT ID HELPER\n/, "");
+    .replace(/\n\/\/ OWN BOT ID HELPER\n[\s\S]*?\/\/ END OWN BOT ID HELPER\n/, "")
+    .replace(/function extractShopCode\(text\) \{[\s\S]*?\n\}\n\nfunction buildSenderName/, `function extractShopCode(text) {
+if (!text) {
+return null;
+}
+
+const match = text.match(/\\bEARTH\\d+\\b/i);
+
+return match
+? match[0].toUpperCase()
+: null;
+}
+
+function buildSenderName`);
   assert.equal(createHash("sha256").update(source).digest("hex"), "70007cdb8bce382dcec11e55f2c503d00629273252179f9eccfc3df96a0861ae");
 });
 
@@ -113,6 +128,12 @@ test("legacy routes and webhook mapped/unmapped/unmatched/duplicate preservation
   assert.equal(saved.sender_name, "Test Sender");
   assert.deepEqual(sqlite.prepare("SELECT action FROM audit_logs").all().map(row => row.action), ["CASE_AUTO_ASSIGNED", "CASE_CREATED_UNASSIGNED"]);
 });
+
+test("compact EARTH and SHAKER identifiers use the existing assignment path safely",async t=>{const{webhook,sqlite}=fixture(t);sqlite.exec("INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1),(3,'EARTH020',1,1),(4,'SHAKER091',2,0)");let body=await(await webhook("SSP-AG-SHAKER090-NG-OLD-1344966037\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER090",2,"OPEN"]);body=await(await webhook("ssp-ag-earth020-bk-old-123456789\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["EARTH020",1,"OPEN"]);body=await(await webhook("SSP-AG-SHAKER091-RK-OLD-1\nTEST")).json();assert.deepEqual([body.shop_code,body.assigned_user_id,body.status],["SHAKER091",null,"UNASSIGNED"]);body=await(await webhook("TEST EARTH003")).json();assert.deepEqual([body.shop_code,body.assigned_user_id],["EARTH003",1]);assert.deepEqual(sqlite.prepare("SELECT shop_code FROM cases ORDER BY id").all().map(row=>row.shop_code),["SHAKER090","EARTH020","SHAKER091","EARTH003"]);});
+
+test("shop extraction ignores unrelated numbers, references, amounts, and URLs",async t=>{const{webhook,sqlite}=fixture(t);for(const text of["TEST 01712345678","TEST 75Y8S4CR","TEST Amount: 1000","TEST https://example.com/slips/EARTH090.png"])assert.equal((await(await webhook(text)).json()).shop_code,null);assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM cases WHERE shop_code IS NOT NULL").get().n,0);});
+
+test("wallet aliases are centralized and compact response parsing is safe",()=>{for(const[alias,name]of[["NG","Nagad"],["NAGAD","Nagad"],["BK","Bkash"],["BKASH","Bkash"],["RK","Rocket"],["ROCKET","Rocket"],["UPAY","Upay"]])assert.equal(normalizeWalletName(alias.toLowerCase()),name);assert.equal(normalizeWalletName("unknown"),null);for(const[alias,name]of[["NG","Nagad"],["BK","Bkash"],["RK","Rocket"],["UPAY","Upay"]])assert.match(formatTelegramResponse("SHAKER090",`SSP-AG-SHAKER090-${alias}-OLD-1\nRef: R1\nAmount: 1000`,"YES"),new RegExp(`Wallet Type: ${name}`));assert.match(formatTelegramResponse("SHAKER090","SSP-AG-SHAKER090-OTHER-OLD-1\nRef: R1\nAmount: 1000","YES"),/Wallet Type: Unknown/);});
 
 test("summary, parameterized filters, safe agent fields, and case detail", async t => {
   const { request, webhook } = fixture(t);
@@ -353,6 +374,8 @@ test("Telegram failure preserves a safe FAILED follow-up record",async t=>{const
 test("follow-up history is user-scoped for AGENT and global for ADMIN",async t=>{const{request,sqlite}=fixture(t);sqlite.exec("INSERT INTO followup_requests(user_id,request_type,shop_group,shop_name,wallet_number,wallet_type,off_from,current_balance,b2b_due,destination_chat_id,telegram_tag,status) VALUES(1,'OFF_WALLET','EARTH','EARTH1','01','Bkash','01:00','1','0','-1','@earth_team','SENT'),(2,'CLOSE_SHOP','SHAKER','SHAKER2','02','Nagad',NULL,NULL,NULL,'-2','@shaker_team','FAILED')");const mine=await(await request("/api/followup-requests",{},1)).json();assert.deepEqual(mine.requests.map(x=>x.shop_name),["EARTH1"]);const all=await(await request("/api/followup-requests",{},4)).json();assert.deepEqual(all.requests.map(x=>x.shop_name),["SHAKER2","EARTH1"]);assert.ok(all.requests.every(x=>x.submitted_by));assert.equal(JSON.stringify(all).includes("user_id"),false);assert.equal(JSON.stringify(all).includes("destination_chat_id"),false);assert.equal(JSON.stringify(all).includes("telegram_tag"),false);assert.equal((await request("/api/followup-requests/2",{},1)).status,404);assert.equal((await request("/api/followup-requests/1",{},1)).status,200);assert.equal((await request("/api/followup-requests/2",{},4)).status,200);});
 
 test("follow-up portal separates review from final submit and uses manual close text",()=>{const html=readFileSync(new URL("../docs/index.html",import.meta.url),"utf8"),app=readFileSync(new URL("../docs/app.js",import.meta.url),"utf8");assert.match(html,/id="new-followup"/);assert.match(html,/type="time"/);assert.match(html,/Follow Up History/);assert.match(html,/<input id="followup-close-type"[^>]+placeholder="Request to close this wallet and withdraw all remaining balance"/);assert.match(html,/<input id="followup-reason"[^>]+placeholder="This wallet will be replaced with a new agent number"/);assert.match(html,/id="review-followup"[^>]*>Review</);assert.match(html,/id="submit-followup"[^>]*type="button"[^>]*>Submit</);assert.doesNotMatch(html,/Review \/ Submit/);assert.doesNotMatch(app,/prompt\(/);assert.match(app,/followup-requests\/preview/);assert.match(app,/followupPayload=followupFormPayload\(\)/);assert.match(app,/\$\("followup-preview-message"\)\.textContent=result\.message/);assert.match(app,/\$\("edit-followup"\).*\$\("followup-form"\)\.hidden=false/);assert.match(app,/submit\.disabled=true/);assert.match(app,/\/api\/followup-groups/);assert.match(app,/\/api\/followup-requests/);assert.doesNotMatch(html,/telegram_chat_id|destination_chat_id|telegram_tag/);});
+
+test("English and Bangla presentation preference is safe and persistent",()=>{const source=readFileSync(new URL("../docs/i18n.js",import.meta.url),"utf8"),app=readFileSync(new URL("../docs/app.js",import.meta.url),"utf8"),html=readFileSync(new URL("../docs/index.html",import.meta.url),"utf8");const load=saved=>{const values=new Map(saved===undefined?[]:[["ops-language",saved]]),document={body:{},documentElement:{},title:"",querySelectorAll:()=>[],createTreeWalker:()=>({nextNode:()=>null})},window={};runInNewContext(source,{localStorage:{getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)},document,window,NodeFilter:{SHOW_TEXT:4},Set,WeakMap});return{...window.opsI18n,values,document}};let i18n=load();assert.equal(i18n.getLanguage(),"en");assert.equal(i18n.t("OPEN"),"OPEN");i18n.setLanguage("bn");assert.equal(i18n.getLanguage(),"bn");assert.equal(i18n.t("OPEN"),"খোলা");assert.equal(i18n.t("Follow Up Request"),"ফলো-আপ রিকোয়েস্ট");assert.equal(i18n.values.get("ops-language"),"bn");i18n.setLanguage("en");assert.equal(i18n.t("OPEN"),"OPEN");assert.equal(i18n.values.get("ops-language"),"en");assert.equal(load("invalid").getLanguage(),"en");assert.equal(load("bn").getLanguage(),"bn");for(const value of["ADMIN","AGENT","EARTH020","SHAKER090","@acckayy"])assert.equal(i18n.t(value),value);for(const label of["User management","Shop assignments","Follow Up History","Case queue","Back / Edit","Review","Submit","SENT","FAILED","PENDING"])assert.ok(source.includes(`\"${label}\"`));assert.match(html,/data-language="en"/);assert.match(html,/data-language="bn"/);assert.match(html,/<option value="OPEN">OPEN<\/option>/);assert.match(html,/<option value="UNASSIGNED">UNASSIGNED<\/option>/);assert.doesNotMatch(source,/fetch\(|api\(|TELEGRAM_BOT_TOKEN/);assert.doesNotMatch(app,/innerHTML/);assert.match(app,/preview_message:\$\("followup-preview-message"\)\.textContent/);});
 
 test("ADMIN lists safe user fields and creates AGENT and ADMIN accounts", async t => {
   const { request, sqlite } = fixture(t);

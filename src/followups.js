@@ -1,8 +1,9 @@
+import { normalizeWalletName } from "./wallets.js";
+
 const TYPES = new Set(["OFF_WALLET", "CLOSE_SHOP"]);
-const WALLETS = { NAGAD: "Nagad", BK: "Bkash", BKASH: "Bkash", RK: "Rocket", ROCKET: "Rocket" };
 const text = (value, max = 200) => typeof value === "string" && value.trim() && value.trim().length <= max && !/[\r\n]/.test(value) ? value.trim() : null;
 const amount = (value) => { const clean = text(value, 50); if (!clean || !/^\d+(?:\.\d{1,2})?$/.test(clean)) return null; const [whole, decimal] = clean.split("."), normalized = whole.replace(/^0+(?=\d)/, ""); return decimal ? `${normalized}.${decimal.replace(/0+$/, "")}`.replace(/\.$/, "") : normalized; };
-const wallet = (value) => WALLETS[String(value || "").trim().toUpperCase()] || null;
+const wallet = normalizeWalletName;
 const safeRequest = (row) => ({ id: row.id, submitted_by: row.submitted_by, request_type: row.request_type, shop_group: row.shop_group, shop_name: row.shop_name, wallet_number: row.wallet_number, wallet_type: row.wallet_type, off_from: row.off_from, current_balance: row.current_balance, b2b_due: row.b2b_due, close_request_type: row.close_request_type, close_reason: row.close_reason, status: row.status, error_message: row.error_message, created_at: row.created_at, sent_at: row.sent_at });
 
 export function formatFollowupMessage(item, tag) {

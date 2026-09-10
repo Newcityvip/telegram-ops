@@ -1,6 +1,7 @@
+import { normalizeWalletName } from "./wallets.js";
+
 const validId = (value) => /^\d+$/.test(String(value)) && Number(value) > 0;
 const storedResponseType = (selected) => ["YES", "NO"].includes(selected) ? selected : "TEXT";
-const walletNames = { NAGAD: "Nagad", BK: "Bkash", BKASH: "Bkash", RK: "Rocket", ROCKET: "Rocket" };
 const responseStatuses = {
   "YES — RECEIVED": "YES Received",
   "NO — NOT RECEIVED": "NO Not Received",
@@ -15,9 +16,9 @@ const readable = (value) => String(value || "").replace(/[_-]+/g, " ").trim().to
 export function formatTelegramResponse(shopCode, rawMessage, selected) {
   const shopMatch = String(shopCode || "").trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
   const shop = shopMatch ? `${shopMatch[1]}${shopMatch[2].replace(/^0+(?=\d)/, "")}` : String(shopCode || "Not provided").trim();
-  const agent = lineValue(rawMessage, "Agent");
-  const walletCode = agent === "Not provided" ? "" : agent.split("-").at(-1).trim().toUpperCase();
-  const wallet = walletNames[walletCode] || readable(walletCode);
+  const agent = lineValue(rawMessage, "Agent"), compact = String(rawMessage || "").split(/\r?\n/,1)[0];
+  const walletCode = agent === "Not provided" ? compact.split("-").map((part) => part.trim().toUpperCase()).findLast((part) => normalizeWalletName(part)) || "" : agent.split("-").at(-1).trim().toUpperCase();
+  const wallet = normalizeWalletName(walletCode) || readable(walletCode);
   const amount = lineValue(rawMessage, "Amount");
   const reference = lineValue(rawMessage, "Ref");
   const status = responseStatuses[selected] || readable(selected);

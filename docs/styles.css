@@ -39,6 +39,30 @@ a {
   justify-content:space-between;
   padding:0 4vw
 }
+.topbar-actions,.language-switch {
+  display:flex;
+  align-items:center;
+  gap:10px
+}
+.language-switch {
+  border:1px solid var(--line);
+  border-radius:7px;
+  padding:4px 7px;
+  gap:3px
+}
+.language-switch button {
+  border:0;
+  border-radius:4px;
+  padding:5px 7px;
+  color:var(--muted);
+  background:transparent;
+  font-size:11px;
+  font-weight:700
+}
+.language-switch button.selected {
+  color:#fff;
+  background:var(--teal)
+}
 .brand {
   display:flex;
   align-items:center;
@@ -519,6 +543,12 @@ dialog::backdrop {
   .topbar {
     padding:0 16px;
     height:64px
+  }
+  .topbar-actions {
+    gap:6px
+  }
+  #identity {
+    display:none
   }
   .stats {
     grid-template-columns:repeat(2,1fr);

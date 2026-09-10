@@ -118,6 +118,12 @@ without storing response bodies, request URLs, credentials, or secrets. If
 Telegram succeeds but the final D1 batch fails, the response remains `PENDING`
 to prevent a retry from sending a duplicate message.
 
+Incoming shop extraction recognizes canonical `EARTH` and `SHAKER` codes in
+existing messages and compact identifiers such as
+`SSP-AG-SHAKER090-NG-OLD-...`. Codes remain uppercase with leading zeroes and
+continue through the existing `shop_assignments` lookup. Wallet display aliases
+are centralized for NG/NAGAD, BK/BKASH, RK/ROCKET, and UPAY.
+
 Response history keeps the rule/UI type separate from the stored response
 category. A literal standard `YES` or `NO` is stored with that same
 `responses.response_type`; other configured choices use `TEXT`. In every case,
@@ -136,6 +142,11 @@ IDs and Telegram tags remain server-side.
 The portal validates and renders the complete server-formatted message in a
 separate review step before submission. Close Shop request type and reason are
 required operator-entered text; their examples are placeholders only.
+
+The portal offers a persistent `EN | বাংলা` presentation toggle. It stores only
+the valid language preference in browser local storage and translates visible
+portal labels while canonical API values, user-entered content, shop codes,
+Telegram messages, routing, and authorization remain unchanged.
 
 ## Schema compatibility
 

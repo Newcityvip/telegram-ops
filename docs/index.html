@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Operations · Telegram Ops</title>
   <link rel="stylesheet" href="./styles.css">
+  <script src="./i18n.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
 <body>
   <section id="login" class="login"><form id="login-form"><span class="brand-mark">T</span><h1>Telegram Ops</h1><p>Sign in to your operations workspace.</p><label>Username<input id="username" required autocomplete="username"></label><label>Password<input id="password" type="password" required autocomplete="current-password"></label><p id="login-error" class="error" hidden></p><button class="button primary">Sign In</button></form></section><div id="portal" hidden>
-  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">T</span> Telegram Ops</a><span><span id="identity"></span> <button id="logout" class="button">Logout</button></span></header>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">T</span> Telegram Ops</a><div class="topbar-actions"><div class="language-switch" role="group" aria-label="Language"><button type="button" data-language="en" aria-pressed="true">EN</button><span aria-hidden="true">|</span><button type="button" data-language="bn" aria-pressed="false">বাংলা</button></div><span id="identity"></span><button id="logout" class="button">Logout</button></div></header>
   <main>
     <section class="page-heading"><div><p class="eyebrow">WORKSPACE / OVERVIEW</p><h1>Operations dashboard</h1><p class="subtle">A clear view of incoming cases and agent ownership.</p></div><div class="heading-actions"><button id="new-followup" class="button primary">Follow Up Request</button><button id="refresh" class="button">↻ Refresh</button></div></section>
     <p id="page-error" class="error" role="alert" hidden></p>
@@ -23,7 +24,7 @@
     <section class="cases-card" aria-labelledby="cases-title">
       <div class="section-heading"><div><h2 id="cases-title">Case queue</h2><p class="subtle">Newest cases first</p></div><span id="updated" class="subtle" aria-live="polite">Loading…</span></div>
       <form id="filters" class="filters">
-        <label>Status<select id="status-filter"><option value="">All statuses</option><option>OPEN</option><option>UNASSIGNED</option></select></label>
+        <label>Status<select id="status-filter"><option value="">All statuses</option><option value="OPEN">OPEN</option><option value="UNASSIGNED">UNASSIGNED</option></select></label>
         <label>Agent<select id="agent-filter"><option value="">All agents</option></select></label>
         <label>Shop code<input id="shop-filter" placeholder="e.g. EARTH020" maxlength="100" autocomplete="off"></label>
         <button class="button primary" type="submit">Apply filters</button><button id="clear" class="button" type="button">Clear</button>

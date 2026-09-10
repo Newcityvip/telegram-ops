@@ -441,10 +441,12 @@ if (!text) {
 return null;
 }
 
-const match = text.match(/\bEARTH\d+\b/i);
+const firstLine = String(text).split(/\r?\n/, 1)[0];
+const compactMatch = firstLine.match(/(?:^|-)\s*((?:EARTH|SHAKER)\d+)\s*(?=-|$)/i);
+const match = compactMatch || String(text).replace(/https?:\/\/\S+/gi, "").match(/\b(?:EARTH|SHAKER)\d+\b/i);
 
 return match
-? match[0].toUpperCase()
+? (compactMatch ? match[1] : match[0]).toUpperCase()
 : null;
 }
 
