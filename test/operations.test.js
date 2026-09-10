@@ -288,6 +288,19 @@ test("frontend persists only the token and clears it on logout", () => {
   assert.equal(source.includes("localStorage.setItem(\"password\""), false);
 });
 
+test("case slip preview validates image URLs and keeps rendering text-only", () => {
+  const app = readFileSync(new URL("../docs/app.js", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../docs/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../docs/styles.css", import.meta.url), "utf8");
+  assert.match(app, /\^Image\\s\*:/); assert.match(app, /\["http:","https:"\]\.includes\(url\.protocol\)/);
+  assert.match(app, /View Slip/); assert.match(app, /showModal\(\)/); assert.match(app, /function closeSlip\(\).*\.close\(\)/);
+  assert.match(app, /document\.createTextNode\(line\)/); assert.doesNotMatch(app, /innerHTML/);
+  assert.match(app, /response_definition/); assert.match(app, /\/respond/);
+  assert.match(html, /id="slip-dialog"/); assert.match(html, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /slip-zoom-in/); assert.match(html, /slip-zoom-out/); assert.match(html, /slip-reset/);
+  assert.match(css, /\.slip-viewport[\s\S]*overflow:auto/); assert.match(css, /object-fit:contain/);
+});
+
 test("role authorization and sender privacy are enforced server-side", async t => {
   const { request, webhook }=fixture(t); await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
   const mine=await (await request("/api/cases",{},1)).json(); assert.deepEqual(mine.cases.map(c=>c.id),[1]);

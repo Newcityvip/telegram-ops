@@ -439,6 +439,38 @@ dialog::backdrop {
 .response-control .error {
   margin:14px 0 0
 }
+.message .slip-link {
+  display:inline-block;
+  margin-left:6px;
+  padding:3px 8px
+}
+.slip-dialog {
+  width:min(1100px,calc(100% - 20px));
+  height:min(92vh,900px)
+}
+.slip-toolbar {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:12px 18px;
+  border-bottom:1px solid var(--line)
+}
+.slip-viewport {
+  height:calc(100% - 120px);
+  overflow:auto;
+  padding:18px;
+  text-align:center;
+  background:#e9eef1
+}
+.slip-viewport img {
+  display:block;
+  width:auto;
+  height:auto;
+  max-width:100%;
+  max-height:calc(92vh - 160px);
+  margin:auto;
+  object-fit:contain
+}
 .sr-only {
   position:absolute;
   width:1px;
@@ -541,5 +573,11 @@ dialog::backdrop {
   }
   .form-body {
     padding:20px
+  }
+  .slip-toolbar .button {
+    flex:1
+  }
+  .slip-viewport {
+    padding:10px
   }
 }
