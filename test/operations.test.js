@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import worker from "../src/index.js";
 import { issueToken, verifyToken } from "../src/auth.js";
+import { formatTelegramResponse } from "../src/responses.js";
 import { compareSync, hashSync } from "bcryptjs";
 
 // Disposable, in-memory test double ONLY. These minimal column definitions come
@@ -408,14 +409,15 @@ test("assigned AGENT sends a configured response to the rule destination", async
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const calls = [], original = globalThis.fetch; t.after(() => globalThis.fetch = original);
   globalThis.fetch = async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return Response.json({ ok: true, result: { message_id: 701 } }); };
-  await webhook("TEST EARTH003");
+  await webhook("TEST EARTH003\nAgent: ESS-AG1-EARTH003-NAGAD\nRef: 75X8NCTO\nAmount: 2900\nCustomer: Private");
   const detail = await (await request("/api/cases/1", {}, 1)).json();
   assert.deepEqual(detail.response_definition, { type: "YES_NO", options: ["YES", "NO"] });
   assert.equal("destination_group_name" in detail, false);
   const response = await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "yes" }) }, 1);
   assert.equal(response.status, 200); assert.equal((await response.json()).response_status, "SENT");
   assert.equal(calls.length, 1); assert.equal(calls[0].body.chat_id, "-2001");
-  assert.match(calls[0].body.text, /Case #1.*EARTH003.*YES/); assert.equal(calls[0].body.text.includes("Test Sender"), false);
+  assert.equal(calls[0].body.text, "Shop Name: EARTH3\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: Yes");
+  assert.equal(calls[0].body.text.includes("Test Sender"), false);
   const saved = sqlite.prepare("SELECT * FROM responses WHERE case_id=1").get();
   assert.equal(saved.status, "SENT"); assert.equal(saved.response_type, "YES"); assert.equal(saved.response_text, "YES"); assert.equal(saved.telegram_response_message_id, 701); assert.ok(saved.sent_at);
   const after = await (await request("/api/cases/1", {}, 1)).json(); assert.equal("destination_chat_id" in after.responses[0], false);
@@ -425,6 +427,16 @@ test("assigned AGENT sends a configured response to the rule destination", async
   assert.equal(audit.user_id, 1); assert.equal(audit.case_id, 1); assert.equal(JSON.parse(audit.metadata).destination_group_name, "EARTH Responses");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 409);
   assert.equal(calls.length, 1);
+});
+
+test("outbound Telegram format parses shops, wallets, amount, reference, and statuses", () => {
+  const source = (shop, wallet) => `1st Follow Up\nDeposit\nAgent: ESS-AG1-${shop}-${wallet}\nRef: 75X8NCTO\nAmount: 2900\nCustomer: Private`;
+  assert.equal(formatTelegramResponse("EARTH020", source("EARTH020", "NAGAD"), "YES — RECEIVED"), "Shop Name: EARTH20\nWallet Type: Nagad\nAmount: 2900\nReference: 75X8NCTO\nStatus: YES Received");
+  assert.match(formatTelegramResponse("EARTH003", source("EARTH003", "BK"), "NO — NOT RECEIVED"), /Shop Name: EARTH3\nWallet Type: Bkash/);
+  assert.match(formatTelegramResponse("EARTH003", source("EARTH003", "RK"), "NEED VIDEO PROOF"), /Wallet Type: Rocket[\s\S]*Status: Need Video Proof/);
+  assert.match(formatTelegramResponse("SHAKER012", source("SHAKER012", "BKASH"), "INCORRECT AMOUNT"), /Shop Name: SHAKER12\nWallet Type: Bkash[\s\S]*Status: Incorrect Amount/);
+  assert.match(formatTelegramResponse("SHAKER012", source("SHAKER012", "ROCKET"), "INCORRECT REFERENCE"), /Wallet Type: Rocket[\s\S]*Status: Incorrect Reference/);
+  assert.match(formatTelegramResponse("EARTH020", source("EARTH020", "MOBILE_WALLET"), "INCORRECT WALLET"), /Wallet Type: Mobile Wallet[\s\S]*Status: Incorrect Wallet/);
 });
 
 test("response authorization and configured values are enforced", async t => {

@@ -1,5 +1,28 @@
 const validId = (value) => /^\d+$/.test(String(value)) && Number(value) > 0;
 const storedResponseType = (selected) => ["YES", "NO"].includes(selected) ? selected : "TEXT";
+const walletNames = { NAGAD: "Nagad", BK: "Bkash", BKASH: "Bkash", RK: "Rocket", ROCKET: "Rocket" };
+const responseStatuses = {
+  "YES — RECEIVED": "YES Received",
+  "NO — NOT RECEIVED": "NO Not Received",
+  "NEED VIDEO PROOF": "Need Video Proof",
+  "INCORRECT AMOUNT": "Incorrect Amount",
+  "INCORRECT REFERENCE": "Incorrect Reference",
+  "INCORRECT WALLET": "Incorrect Wallet"
+};
+const lineValue = (message, label) => String(message || "").match(new RegExp(`^${label}\\s*:\\s*([^\\r\\n]+)`, "im"))?.[1].trim() || "Not provided";
+const readable = (value) => String(value || "").replace(/[_-]+/g, " ").trim().toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Unknown";
+
+export function formatTelegramResponse(shopCode, rawMessage, selected) {
+  const shopMatch = String(shopCode || "").trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+  const shop = shopMatch ? `${shopMatch[1]}${shopMatch[2].replace(/^0+(?=\d)/, "")}` : String(shopCode || "Not provided").trim();
+  const agent = lineValue(rawMessage, "Agent");
+  const walletCode = agent === "Not provided" ? "" : agent.split("-").at(-1).trim().toUpperCase();
+  const wallet = walletNames[walletCode] || readable(walletCode);
+  const amount = lineValue(rawMessage, "Amount");
+  const reference = lineValue(rawMessage, "Ref");
+  const status = responseStatuses[selected] || readable(selected);
+  return `Shop Name: ${shop}\nWallet Type: ${wallet}\nAmount: ${amount}\nReference: ${reference}\nStatus: ${status}`;
+}
 
 export function responseDefinition(type, config) {
   const normalizedType = String(type || "").trim().toUpperCase();
@@ -24,7 +47,7 @@ export async function respondToCase(request, env, user, caseId) {
   let item;
   try {
     item = await env.DB.prepare(`
-      SELECT c.id, c.shop_code, c.matched_rule_id, c.assigned_user_id,
+      SELECT c.id, c.shop_code, c.raw_message, c.matched_rule_id, c.assigned_user_id,
         r.response_type, r.response_config, r.destination_group_id
       FROM cases c
       LEFT JOIN rules r ON r.id = c.matched_rule_id
@@ -64,7 +87,7 @@ export async function respondToCase(request, env, user, caseId) {
   } catch { return { error: "RESPONSE_STORAGE_FAILED", status: 500 }; }
   if (!claim.meta.changes) return { error: "RESPONSE_ALREADY_SUBMITTED", status: 409 };
   const responseId = Number(claim.meta.last_row_id);
-  const message = `Case #${caseId} | Shop ${item.shop_code || "N/A"} | Response: ${selected}`;
+  const message = formatTelegramResponse(item.shop_code, item.raw_message, selected);
 
   let telegramMessageId, failureReason = "Telegram request failed";
   try {
