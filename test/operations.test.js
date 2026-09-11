@@ -353,10 +353,11 @@ test("case slip preview validates image URLs and keeps rendering text-only", () 
   assert.match(app, /\^Image\\s\*:/); assert.match(app, /\["http:","https:"\]\.includes\(url\.protocol\)/);
   assert.match(app, /View Slip/); assert.match(app, /showModal\(\)/); assert.match(app, /function closeSlip\(\).*\.close\(\)/);
   assert.match(app, /document\.createTextNode\(line\)/); assert.doesNotMatch(app, /innerHTML/);
-  assert.match(app, /link\.target="_blank"/); assert.match(app, /link\.rel="noopener noreferrer"/);
+  assert.match(app, /button\.onclick=\(\)=>openSlip\(image\)/); assert.doesNotMatch(app, /window\.open|target="_blank"/);
   assert.match(app, /response_definition/); assert.match(app, /\/respond/);
-  assert.match(html, /id="slip-dialog"/); assert.match(html, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /id="slip-dialog"/); assert.doesNotMatch(html, /id="slip-original"|Open original/);
   assert.match(html, /slip-zoom-in/); assert.match(html, /slip-zoom-out/); assert.match(html, /slip-reset/);
+  assert.match(html, /id="slip-full"/);assert.match(app,/function toggleSlipFull/);assert.match(css,/\.slip-dialog\.full-view/);
   assert.match(css, /\.slip-viewport[\s\S]*overflow:auto/); assert.match(css, /object-fit:contain/);
   const helpers=app.match(/function validSlipUrl[^\n]+\nfunction slipUrl[^\n]+/)?.[0];
   assert.ok(helpers);
@@ -365,6 +366,8 @@ test("case slip preview validates image URLs and keeps rendering text-only", () 
   assert.equal(detect("Image: http://example.test/slip.jpg"),"http://example.test/slip.jpg");
   for(const value of["javascript:alert(1)","data:image/png;base64,abc","file:///tmp/slip.png",""])assert.equal(detect(value),null);
 });
+
+test("mobile cards and case loading lifecycle remain responsive and localized",()=>{const app=readFileSync(new URL("../docs/app.js",import.meta.url),"utf8"),html=readFileSync(new URL("../docs/index.html",import.meta.url),"utf8"),css=readFileSync(new URL("../docs/styles.css",import.meta.url),"utf8"),i18n=readFileSync(new URL("../docs/i18n.js",import.meta.url),"utf8");for(const id of["case-cards","followup-cards","case-rows","followup-rows","updated","filters"])assert.match(html,new RegExp(`id="${id}"`));for(const label of["Case","Shop","Received","Rule","Agent","Status","View"])assert.ok(app.includes(`t("${label}")`)||app.includes(`"${label}"`));assert.match(css,/@media\(max-width:600px\)[\s\S]*\.desktop-list[\s\S]*display:none[\s\S]*\.mobile-list[\s\S]*display:grid/);assert.match(css,/\.response-control[\s\S]*flex-wrap:wrap/);assert.match(css,/\.assignment \.button[\s\S]*width:100%/);assert.match(app,/loading\.hidden=false[\s\S]*try\{[\s\S]*finally\{loading\.hidden=true/);assert.match(app,/\$\("filters"\)\.onsubmit[\s\S]*cases\(\)/);assert.match(app,/\$\("refresh"\)\.onclick=start/);for(const label of["Unable to load cases.","Full View","Exit Full View","Fit / Reset","Zoom In","Zoom Out"])assert.ok(i18n.includes(`"${label}"`));});
 
 test("role authorization and sender privacy are enforced server-side", async t => {
   const { request, webhook }=fixture(t); await webhook("TEST EARTH003"); await webhook("TEST EARTH999");
@@ -512,7 +515,7 @@ test("a failed user audit rolls back the account mutation", async t => {
 
 test("assigned AGENT sends a configured response to the rule destination", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'EARTH Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', destination_group_id=2 WHERE id=1");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'); UPDATE rules SET response_type='YES_NO' WHERE id=1");
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const calls = [], original = globalThis.fetch; t.after(() => globalThis.fetch = original);
   globalThis.fetch = async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return Response.json({ ok: true, result: { message_id: 701 } }); };
@@ -531,7 +534,7 @@ test("assigned AGENT sends a configured response to the rule destination", async
   const item = sqlite.prepare("SELECT status,answered_at FROM cases WHERE id=1").get();
   assert.equal(item.status, "ANSWERED"); assert.ok(item.answered_at);
   const audit = sqlite.prepare("SELECT * FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get();
-  assert.equal(audit.user_id, 1); assert.equal(audit.case_id, 1); assert.equal(JSON.parse(audit.metadata).destination_group_name, "EARTH Responses");
+  assert.equal(audit.user_id, 1); assert.equal(audit.case_id, 1); assert.equal(JSON.parse(audit.metadata).response_group_name, "EARTH");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 409);
   assert.equal(calls.length, 1);
 });
@@ -559,7 +562,7 @@ test("compact payment details preserve structural references, amounts, and canon
   assert.equal(parsePaymentDetails("SSP-AG-SHAKER090-RK-OLD-1344966037\n\nhttps://example.test/6845052296.png\n\n1000").reference,"Not provided");
 
   const{webhook,sqlite,request,env}=fixture(t);
-  sqlite.exec("UPDATE rules SET rule_name='1st Follow Up - Deposit',match_pattern='1st Follow Up',response_type='YES_NO',response_config='[\"YES — RECEIVED\",\"NEED VIDEO PROOF\"]',destination_group_id=2; INSERT INTO telegram_groups VALUES(2,'-2001','Responses','DESTINATION',1); INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1)");
+  sqlite.exec("UPDATE rules SET rule_name='1st Follow Up - Deposit',match_pattern='1st Follow Up',response_type='YES_NO',response_config='[\"YES — RECEIVED\",\"NEED VIDEO PROOF\"]'; INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('SHAKER','-2001','@shaker_team'); INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',2,1)");
   env.TELEGRAM_BOT_TOKEN="test-bot-token";
   const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);let sent;
   globalThis.fetch=async(_url,options)=>{sent=JSON.parse(options.body);return Response.json({ok:true,result:{message_id:77}})};
@@ -574,37 +577,52 @@ test("compact payment details preserve structural references, amounts, and canon
 
 test("response authorization and configured values are enforced", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', response_config='[\"APPROVE\",\"DECLINE\"]', destination_group_id=2 WHERE id=1");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'); UPDATE rules SET response_type='YES_NO', response_config='[\"APPROVE\",\"DECLINE\"]' WHERE id=1");
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original); let sends = 0;
   globalThis.fetch = async () => { sends++; return Response.json({ ok: true, result: { message_id: 1 } }); };
   await webhook("TEST EARTH003");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 400);
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "APPROVE" }) }, 2)).status, 404);
-  assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "APPROVE" }) }, 4)).status, 403);
   sqlite.exec("UPDATE users SET is_active=0 WHERE id=1");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "APPROVE" }) }, 1)).status, 401);
   assert.equal(sends, 0); assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM responses").get().n, 0);
 });
 
-test("missing or inactive destination configuration fails without a send", async t => {
+test("ADMIN responds to assigned and unassigned cases without changing ownership",async t=>{
+  const{request,webhook,sqlite,env}=fixture(t);
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'); UPDATE rules SET response_type='YES_NO'");env.TELEGRAM_BOT_TOKEN="test";
+  const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);let sends=0;globalThis.fetch=async()=>Response.json({ok:true,result:{message_id:++sends}});
+  await webhook("TEST EARTH003");await webhook("TEST EARTH999");
+  assert.equal((await request("/api/cases/2/respond",{method:"POST",body:JSON.stringify({response:"YES"})},1)).status,404);
+  assert.equal((await request("/api/cases/1/respond",{method:"POST",body:JSON.stringify({response:"YES"})},4)).status,200);
+  assert.equal((await request("/api/cases/2/respond",{method:"POST",body:JSON.stringify({response:"NO"})},4)).status,200);
+  assert.deepEqual(sqlite.prepare("SELECT id,assigned_user_id,status FROM cases ORDER BY id").all().map(row=>({...row})),[{id:1,assigned_user_id:1,status:"ANSWERED"},{id:2,assigned_user_id:null,status:"ANSWERED"}]);
+  assert.deepEqual(sqlite.prepare("SELECT case_id,user_id FROM responses ORDER BY case_id").all().map(row=>({...row})),[{case_id:1,user_id:4},{case_id:2,user_id:4}]);
+  assert.deepEqual(sqlite.prepare("SELECT case_id,user_id FROM audit_logs WHERE action='CASE_RESPONSE_SENT' ORDER BY case_id").all().map(row=>({...row})),[{case_id:1,user_id:4},{case_id:2,user_id:4}]);
+  assert.equal((await request("/api/cases/1/respond",{method:"POST",body:JSON.stringify({response:"YES"})},4)).status,409);assert.equal(sends,2);
+});
+
+test("missing, inactive, and ambiguous response routes fail without a send", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original); let sends = 0;
   globalThis.fetch = async () => { sends++; return Response.json({ ok: true, result: { message_id: 1 } }); };
   await webhook("TEST EARTH003");
-  sqlite.exec("UPDATE rules SET response_type='YES_NO', destination_group_id=NULL WHERE id=1");
+  sqlite.exec("UPDATE rules SET response_type='YES_NO'");
+  let response=await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1);
+  assert.equal(response.status,409);assert.equal((await response.json()).error,"RESPONSE_ROUTE_UNAVAILABLE");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag,is_active) VALUES('EARTH','-1','@earth_team',0)");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 409);
-  sqlite.exec("UPDATE rules SET destination_group_id=99 WHERE id=1");
-  assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 409);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'Inactive', 'DESTINATION', 0); UPDATE rules SET destination_group_id=2 WHERE id=1");
-  assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 409);
+  sqlite.exec("UPDATE followup_groups SET is_active=1; INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EAR','-2','@ear_team')");
+  response=await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1);
+  assert.equal(response.status,409);assert.equal((await response.json()).error,"RESPONSE_ROUTE_AMBIGUOUS");
   assert.equal(sends, 0); assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM responses").get().n, 0); assert.equal(sqlite.prepare("SELECT status FROM cases WHERE id=1").get().status, "OPEN");
 });
 
 test("Telegram failure is recorded as failed and does not answer the case", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', destination_group_id=2 WHERE id=1");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'); UPDATE rules SET response_type='YES_NO' WHERE id=1");
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original);
   globalThis.fetch = async () => Response.json({ ok: false, description: "test rejection" }, { status: 400 });
@@ -618,23 +636,24 @@ test("Telegram failure is recorded as failed and does not answer the case", asyn
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM audit_logs WHERE action='CASE_RESPONSE_SENT'").get().n, 0);
 });
 
-test("different rules resolve different Telegram destination groups", async t => {
+test("operational responses route by active unambiguous shop-group prefix", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'EARTH Responses', 'DESTINATION', 1); INSERT INTO telegram_groups VALUES (3, '-3001', 'SHAKER Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', destination_group_id=2 WHERE id=1; INSERT INTO rules VALUES (2, 'SHAKER Message', 'CONTAINS', 'SHAKER', 'YES_NO', NULL, 3, 20, 1)");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'),('SHAKER','-3001','@shaker_team'),('RED','-4001','@red_team'); UPDATE rules SET response_type='YES_NO'; INSERT INTO shop_assignments(id,shop_code,assigned_user_id,is_active) VALUES(2,'SHAKER090',1,1),(3,'RED001',1,1)");
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const chats = [], original = globalThis.fetch; t.after(() => globalThis.fetch = original);
   globalThis.fetch = async (_url, options) => { chats.push(JSON.parse(options.body).chat_id); return Response.json({ ok: true, result: { message_id: 800 + chats.length } }); };
-  await webhook("TEST EARTH003"); await webhook("SHAKER EARTH003");
+  await webhook("TEST EARTH003"); await webhook("TEST SHAKER090"); sqlite.exec("INSERT INTO cases(id,shop_code,raw_message,matched_rule_id,assigned_user_id,status) VALUES(3,'red001','TEST RED001',1,1,'OPEN')");
   assert.equal((await request("/api/cases/1/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 200);
   assert.equal((await request("/api/cases/2/respond", { method: "POST", body: JSON.stringify({ response: "NO" }) }, 1)).status, 200);
-  assert.deepEqual(chats, ["-2001", "-3001"]);
-  const adminDetail = await (await request("/api/cases/2")).json(); assert.equal(adminDetail.destination_group_name, "SHAKER Responses");
+  assert.equal((await request("/api/cases/3/respond", { method: "POST", body: JSON.stringify({ response: "YES" }) }, 1)).status, 200);
+  assert.deepEqual(chats, ["-2001", "-3001", "-4001"]);
+  const adminDetail = await (await request("/api/cases/2")).json(); assert.equal(adminDetail.destination_group_name, "SHAKER");assert.equal(JSON.stringify(adminDetail).includes("-3001"),false);
 });
 
 test("all six rule-specific choices satisfy the production response type constraint", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
   const choices = ["YES — RECEIVED", "NO — NOT RECEIVED", "NEED VIDEO PROOF", "INCORRECT AMOUNT", "INCORRECT REFERENCE", "INCORRECT WALLET"];
-  sqlite.prepare("INSERT INTO telegram_groups VALUES (2, '-2001', 'Deposit Responses', 'DESTINATION', 1)").run();
+  sqlite.prepare("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team')").run();
   sqlite.prepare("UPDATE rules SET rule_name='1st Follow Up - Deposit', response_type='YES_NO', response_config=?, destination_group_id=2 WHERE id=1").run(JSON.stringify(choices));
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original);
@@ -657,7 +676,7 @@ test("all six rule-specific choices satisfy the production response type constra
 
 test("response finalization failures return a safe diagnostic and remain retry-blocked", async t => {
   const { request, webhook, sqlite, env } = fixture(t);
-  sqlite.exec("INSERT INTO telegram_groups VALUES (2, '-2001', 'Responses', 'DESTINATION', 1); UPDATE rules SET response_type='YES_NO', destination_group_id=2 WHERE id=1");
+  sqlite.exec("INSERT INTO followup_groups(shop_group,telegram_chat_id,telegram_tag) VALUES('EARTH','-2001','@earth_team'); UPDATE rules SET response_type='YES_NO' WHERE id=1");
   env.TELEGRAM_BOT_TOKEN = "test-bot-token";
   const original = globalThis.fetch; t.after(() => globalThis.fetch = original); let sends = 0;
   globalThis.fetch = async () => { sends++; return Response.json({ ok: true, result: { message_id: 902 } }); };

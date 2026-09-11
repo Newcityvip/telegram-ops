@@ -261,6 +261,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
   overflow-x:auto;
   position:relative
 }
+.mobile-list {
+  display:none
+}
 table {
   border-collapse:collapse;
   width:100%;
@@ -476,6 +479,12 @@ dialog::backdrop {
   width:min(1100px,calc(100% - 20px));
   height:min(92vh,900px)
 }
+.slip-dialog.full-view {
+  width:calc(100% - 12px);
+  height:calc(100vh - 12px);
+  max-width:none;
+  max-height:none
+}
 .slip-toolbar {
   display:flex;
   flex-wrap:wrap;
@@ -582,10 +591,13 @@ dialog::backdrop {
   }
   .filters {
     padding:0 18px 18px;
-    gap:10px
+    gap:10px;
+    flex-direction:column;
+    align-items:stretch
   }
   .filters label {
-    min-width:calc(50% - 10px)
+    min-width:100%;
+    width:100%
   }
   .filters label:nth-child(3) {
     min-width:100%
@@ -603,6 +615,54 @@ dialog::backdrop {
     width:100%;
     margin-bottom:10px
   }
+  .assignment .button {
+    width:100%
+  }
+  #case-dialog {
+    width:calc(100% - 12px);
+    max-height:calc(100vh - 12px)
+  }
+  .response-control {
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px
+  }
+  .response-control h3,.response-control .subtle,.response-control .error {
+    flex-basis:100%
+  }
+  .response-control .button {
+    margin:4px 0;
+    min-height:44px;
+    flex:1 1 145px;
+    white-space:normal
+  }
+  .desktop-list {
+    display:none
+  }
+  .mobile-list {
+    display:grid;
+    gap:12px;
+    padding:0 14px 18px
+  }
+  .mobile-card {
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:16px;
+    background:#fff
+  }
+  .mobile-card h3 {
+    margin:0 0 10px
+  }
+  .mobile-fact {
+    margin:5px 0;
+    overflow-wrap:anywhere;
+    font-size:12px
+  }
+  .mobile-card>.button {
+    width:100%;
+    min-height:44px;
+    margin-top:12px
+  }
   .table-footer {
     padding:14px 18px
   }
@@ -619,7 +679,8 @@ dialog::backdrop {
     flex:1
   }
   .slip-viewport {
-    padding:10px
+    padding:10px;
+    height:calc(100% - 170px)
   }
 }
 
