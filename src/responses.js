@@ -15,7 +15,7 @@ const readable = (value) => String(value || "").replace(/[_-]+/g, " ").trim().to
 
 export function parsePaymentDetails(rawMessage) {
   const lines = String(rawMessage || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const compact = lines[0]?.match(/^SSP-AG-((?:EARTH|SHAKER)\d+)-([A-Z]+)-OLD-\d+$/i);
+  const compact = lines[0]?.match(/^SSP-AG-((?:EARTH|SHAKER)\d+)-([A-Z]+)\s*-\s*(?:OLD-)?\d+$/i);
   const compactReference = compact && /^[A-Z0-9]+$/i.test(lines[1] || "") ? lines[1] : null;
   const compactAmount = compact && /^\d+(?:[.,]\d+)?$/.test(lines[2] || "") ? lines[2] : null;
   const agent = lineValue(rawMessage, "Agent");

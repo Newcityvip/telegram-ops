@@ -141,6 +141,12 @@ test("production-style compact messages match their configured rule and use norm
   assert.deepEqual((await(await request("/api/cases",{},2)).json()).cases.map(row=>row.shop_code),["SHAKER090"]);
   assert.deepEqual((await(await request("/api/cases",{},1)).json()).cases,[]);
 
+  const spaced=`SSP-AG-SHAKER090-BK - 1716984670\n01M0KTEST00\n6500\nhttps://workflow-media-assets-3.s3.amazonaws.com/uploads/bck3-dc9e736c-fed2-4da2-97f3-92cb16ad40a6-33769.jpg\nPls confirm whether the agent’s number is registered with UP ? - shehan`;
+  body=await(await webhook(spaced)).json();
+  assert.deepEqual([body.created,body.shop_code,body.assigned_user_id,body.status],[true,"SHAKER090",2,"OPEN"]);
+  assert.deepEqual(parsePaymentDetails(spaced),{compactShopCode:"SHAKER090",wallet:"Bkash",amount:"6500",reference:"01M0KTEST00"});
+  assert.equal(sqlite.prepare("SELECT raw_message FROM cases WHERE id=?").get(body.case_id).raw_message,spaced);
+
   body=await(await webhook(message.replace(/\nhttps:\/\/[^\n]+/,"").replace("1344966037","1344966038"))).json();
   assert.deepEqual([body.shop_code,body.assigned_user_id],["SHAKER090",2]);
   for(const [wallet,id] of [["BK",1344966039],["RK",1344966040],["UPAY",1344966041]]){

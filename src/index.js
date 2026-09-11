@@ -452,7 +452,7 @@ return match
 
 function ruleMatchingText(text) {
 const firstLine = String(text || "").split(/\r?\n/, 1)[0].trim();
-const compactFollowUp = /^SSP-AG-(?:EARTH|SHAKER)\d+-(?:NG|NAGAD|BK|BKASH|RK|ROCKET|UPAY)-OLD-\d+$/i.test(firstLine);
+const compactFollowUp = /^SSP-AG-(?:EARTH|SHAKER)\d+-(?:NG|NAGAD|BK|BKASH|RK|ROCKET|UPAY)\s*-\s*(?:OLD-)?\d+$/i.test(firstLine);
 return compactFollowUp ? `1st Follow Up\nDeposit\n${text}` : text;
 }
 
